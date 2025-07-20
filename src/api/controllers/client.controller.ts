@@ -18,14 +18,9 @@ const handleError = (res: Response, error: any, defaultMessage: string, statusCo
 export const createClient = async (req: AuthRequest, res: Response) => {
   console.log("POST /api/client/create");
   try {
-    const uid = req.user?.uid;
-    if (!uid) {
-      return res.status(StatusCodes.BAD_REQUEST).json({ success: false, error: 'User ID not found in token.' });
-    }
-
     const clientId = uuidv4();
     
-    const newClient = new ClientData({ uid, clientId, status: 'INITIALIZED' });
+    const newClient = new ClientData({ clientId, status: 'INITIALIZED' });
     await newClient.save();
     res.status(StatusCodes.CREATED).json({ success: true, client: newClient });
   } catch (error) {
@@ -41,9 +36,9 @@ export const connectClient = async (req: AuthRequest, res: Response) => {
       return res.status(StatusCodes.BAD_REQUEST).json({ success: false, error: 'clientId is required.' });
     }
 
-    const clientData = await ClientData.findOne({ clientId, uid: req.user?.uid });
+    const clientData = await ClientData.findOne({ clientId });
     if (!clientData) {
-      return res.status(StatusCodes.NOT_FOUND).json({ success: false, error: 'Client not found or permission denied.' });
+      return res.status(StatusCodes.NOT_FOUND).json({ success: false, error: 'Client not found.' });
     }
     
     await clientService.initializeClient(clientId);
@@ -86,8 +81,7 @@ export const logoutClient = async (req: AuthRequest, res: Response) => {
 export const getAllClients = async (req: AuthRequest, res: Response) => {
   console.log("GET /api/client/");
   try {
-    const uid = req.user?.uid;
-    const clients = await ClientData.find({ uid }).select('-session');
+    const clients = await ClientData.find().select('-session');
     res.status(StatusCodes.OK).json({ success: true, clients });
   } catch (error) {
     handleError(res, error, 'Failed to retrieve clients.');
@@ -98,11 +92,10 @@ export const deleteClient = async (req: AuthRequest, res: Response) => {
   console.log("DELETE /api/client/:clientId");
   try {
     const { clientId } = req.params;
-    const uid = req.user?.uid;
 
-    const client = await ClientData.findOne({ clientId, uid });
+    const client = await ClientData.findOne({ clientId });
     if (!client) {
-      return res.status(StatusCodes.NOT_FOUND).json({ success: false, error: 'Client not found or permission denied.' });
+      return res.status(StatusCodes.NOT_FOUND).json({ success: false, error: 'Client not found.' });
     }
 
     await clientService.disconnectClient(clientId);
@@ -118,11 +111,10 @@ export const getClientById = async (req: AuthRequest, res: Response) => {
   console.log("GET /api/client/:clientId");
   try {
     const { clientId } = req.params;
-    const uid = req.user?.uid;
-    const client = await ClientData.findOne({ clientId, uid }).select('-session');
+    const client = await ClientData.findOne({ clientId }).select('-session');
 
     if (!client) {
-      return res.status(StatusCodes.NOT_FOUND).json({ success: false, error: 'Client not found or permission denied.' });
+      return res.status(StatusCodes.NOT_FOUND).json({ success: false, error: 'Client not found.' });
     }
 
     res.status(StatusCodes.OK).json({ success: true, client });

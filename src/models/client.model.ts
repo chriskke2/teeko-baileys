@@ -2,7 +2,6 @@ import mongoose from 'mongoose';
 
 const clientDataSchema = new mongoose.Schema(
   {
-    uid: { type: String, required: true },
     clientId: { type: String, required: true, unique: true },
     status: { type: String, required: true },
     profileName: { type: String },
