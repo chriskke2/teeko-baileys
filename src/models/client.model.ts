@@ -1,8 +1,8 @@
 import mongoose from 'mongoose';
+import config from '../config';
 
 const clientDataSchema = new mongoose.Schema(
   {
-    clientId: { type: String, required: true, unique: true },
     status: { type: String, required: true },
     profileName: { type: String },
     phoneNumber: { type: String },
@@ -12,6 +12,9 @@ const clientDataSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-const ClientData = mongoose.model('ClientData', clientDataSchema, 'clients');
+// Remove any unique indexes on fields that don't have values during creation
+clientDataSchema.index({ phoneNumber: 1 }, { unique: true, sparse: true });
+
+const ClientData = mongoose.model('ClientData', clientDataSchema, config.mongodb_collection);
 
 export default ClientData; 

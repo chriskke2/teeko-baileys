@@ -1,6 +1,5 @@
 import makeWASocket, {
     fetchLatestBaileysVersion,
-    isJidNewsletter,
     DisconnectReason,
     proto,
     WAMessageContent,
@@ -18,9 +17,10 @@ import qrcodeTerminal from 'qrcode-terminal';
 import qrcode from 'qrcode';
 import ClientData from '../models/client.model';
 import socketService from './socket.service';
+import userService from './user.service';
 
 const useMongoDBAuthState = async (clientId: string): Promise<{ state: { creds: AuthenticationCreds, keys: SignalKeyStore }, saveCreds: () => Promise<void> }> => {
-    const client = await ClientData.findOne({ clientId }).lean();
+    const client = await ClientData.findById(clientId).lean();
 
     let creds: AuthenticationCreds;
     if (client && client.session && client.session.creds) {
@@ -37,7 +37,7 @@ const useMongoDBAuthState = async (clientId: string): Promise<{ state: { creds: 
             keys 
         };
         try {
-            await ClientData.updateOne({ clientId }, { $set: { session: session } });
+            await ClientData.findByIdAndUpdate(clientId, { $set: { session: session } });
         } catch (error) {
             console.error('Failed to save auth state to MongoDB', error);
         }
@@ -100,7 +100,7 @@ class ClientService {
             console.log(`Disconnecting client ${clientId}...`);
             await sock.end(new Boom('Manual Disconnect', { statusCode: DisconnectReason.connectionClosed }));
             this.clients.delete(clientId);
-            await ClientData.updateOne({ clientId }, { status: 'DISCONNECTED' });
+            await ClientData.findByIdAndUpdate(clientId, { status: 'DISCONNECTED' });
         }
     }
 
@@ -112,7 +112,7 @@ class ClientService {
             this.clients.delete(clientId);
         }
         // Ensure session is cleared from DB regardless of whether the client was in memory
-        await ClientData.updateOne({ clientId }, { $set: { session: null, status: 'DISCONNECTED' } });
+        await ClientData.findByIdAndUpdate(clientId, { $set: { session: null, status: 'DISCONNECTED' } });
     }
 
     public async initializeClient(clientId: string) {
@@ -138,7 +138,7 @@ class ClientService {
         });
 
         this.clients.set(clientId, sock);
-        await ClientData.updateOne({ clientId }, { status: 'INITIALIZING' });
+        await ClientData.findByIdAndUpdate(clientId, { status: 'INITIALIZING' });
 
         this.setupEventListeners(sock, clientId, saveCreds);
 
@@ -178,7 +178,7 @@ class ClientService {
                     const qrCodeDataURL = await qrcode.toDataURL(qr);
                     io.to(clientId).emit('qr', { qrCode: qrCodeDataURL });
                     io.to(clientId).emit('statusChange', { status: 'WAITING_QR' });
-                    await ClientData.updateOne({ clientId }, { status: 'WAITING_QR' });
+                    await ClientData.findByIdAndUpdate(clientId, { status: 'WAITING_QR' });
                 }
 
                 if (connection === 'close') {
@@ -202,12 +202,12 @@ class ClientService {
                             message: 'Connection replaced by another session.' 
                         });
                         this.clients.delete(clientId);
-                        await ClientData.updateOne({ clientId }, { status: 'DISCONNECTED' });
+                        await ClientData.findByIdAndUpdate(clientId, { status: 'DISCONNECTED' });
                     } else if (statusCode === DisconnectReason.loggedOut) {
                         console.log(`Connection closed for ${clientId}. You are logged out.`);
                         io.to(clientId).emit('statusChange', { status: 'DISCONNECTED' });
                         this.clients.delete(clientId);
-                        await ClientData.updateOne({ clientId }, { status: 'DISCONNECTED' });
+                        await ClientData.findByIdAndUpdate(clientId, { status: 'DISCONNECTED' });
                         this.disconnectedClients.add(clientId);
                     } else if (statusCode === DisconnectReason.connectionClosed) {
                         console.log(`Connection closed manually for ${clientId}. Not reconnecting.`);
@@ -231,7 +231,7 @@ class ClientService {
 
                     const { id, name } = sock.user;
                     const phoneNumber = id.split(':')[0];
-                    await ClientData.updateOne({ clientId }, { 
+                    await ClientData.findByIdAndUpdate(clientId, { 
                         status: 'AUTHENTICATED',
                         phoneNumber: phoneNumber,
                         profileName: name,
@@ -247,6 +247,19 @@ class ClientService {
             if (events['messages.upsert']) {
                 if (this.disconnectedClients.has(clientId)) return;
                 io.to(clientId).emit('messages', { type: 'messages.upsert', data: events['messages.upsert'] });
+                
+                // Process incoming messages for activation codes
+                if (events['messages.upsert'].type === 'notify' && 
+                    Array.isArray(events['messages.upsert'].messages)) {
+                    for (const message of events['messages.upsert'].messages) {
+                        try {
+                            // Process each message for activation codes
+                            await userService.processIncomingMessage(message, clientId);
+                        } catch (error) {
+                            console.error('Error processing message for activation:', error);
+                        }
+                    }
+                }
             }
             
             if (events['messages.update']) {
@@ -349,13 +362,13 @@ class ClientService {
                 status: 'DISCONNECTED', 
                 message: 'Maximum reconnection attempts reached. Please reconnect manually.' 
             });
-            await ClientData.updateOne({ clientId }, { status: 'DISCONNECTED' });
+            await ClientData.findByIdAndUpdate(clientId, { status: 'DISCONNECTED' });
             this.reconnectAttempts.delete(clientId);
             return;
         }
         
         // Set status to reconnecting in database
-        await ClientData.updateOne({ clientId }, { status: 'RECONNECTING' });
+        await ClientData.findByIdAndUpdate(clientId, { status: 'RECONNECTING' });
         
         setTimeout(async () => {
             try {

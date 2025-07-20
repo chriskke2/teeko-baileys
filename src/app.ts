@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import clientRoutes from './api/routes/client.routes';
+import userRoutes from './api/routes/user.routes';
+import packageRoutes from './api/routes/package.routes';
 
 const app = express();
 
@@ -15,5 +17,7 @@ app.get('/', (req, res) => {
 
 // API routes
 app.use('/api/client', clientRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/packages', packageRoutes);
 
 export { app }; 

@@ -1,6 +1,7 @@
 import { Server } from 'socket.io';
 import http from 'http';
 import ClientData from '../models/client.model';
+import mongoose from 'mongoose';
 
 class SocketService {
   private static instance: SocketService;
@@ -34,7 +35,14 @@ class SocketService {
           return;
         }
 
-        const clientExists = await ClientData.findOne({ clientId }).lean();
+        // Validate if clientId is a valid MongoDB ObjectId
+        if (!mongoose.Types.ObjectId.isValid(clientId)) {
+          console.error(`Socket ${socket.id} attempted to subscribe with invalid ObjectId format: ${clientId}`);
+          socket.emit('subscription_error', { message: 'Invalid ObjectId format.' });
+          return;
+        }
+
+        const clientExists = await ClientData.findById(clientId).lean();
         if (!clientExists) {
             console.error(`Subscription failed: ClientId '${clientId}' not found.`);
             socket.emit('subscription_error', { message: `Client not found.` });

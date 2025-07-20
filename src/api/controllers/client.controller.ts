@@ -1,9 +1,9 @@
 import { Response } from 'express';
-import { v4 as uuidv4 } from 'uuid';
 import ClientData from '../../models/client.model';
 import { StatusCodes } from 'http-status-codes';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import clientService from '../../services/client.service';
+import mongoose from 'mongoose';
 
 // Standardized error handler
 const handleError = (res: Response, error: any, defaultMessage: string, statusCode: number = StatusCodes.INTERNAL_SERVER_ERROR) => {
@@ -18,9 +18,7 @@ const handleError = (res: Response, error: any, defaultMessage: string, statusCo
 export const createClient = async (req: AuthRequest, res: Response) => {
   console.log("POST /api/client/create");
   try {
-    const clientId = uuidv4();
-    
-    const newClient = new ClientData({ clientId, status: 'INITIALIZED' });
+    const newClient = new ClientData({ status: 'INITIALIZED' });
     await newClient.save();
     res.status(StatusCodes.CREATED).json({ success: true, client: newClient });
   } catch (error) {
@@ -36,7 +34,12 @@ export const connectClient = async (req: AuthRequest, res: Response) => {
       return res.status(StatusCodes.BAD_REQUEST).json({ success: false, error: 'clientId is required.' });
     }
 
-    const clientData = await ClientData.findOne({ clientId });
+    // Validate if the ID is a valid MongoDB ObjectId
+    if (!mongoose.Types.ObjectId.isValid(clientId)) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ success: false, error: 'Invalid client ID format.' });
+    }
+
+    const clientData = await ClientData.findById(clientId);
     if (!clientData) {
       return res.status(StatusCodes.NOT_FOUND).json({ success: false, error: 'Client not found.' });
     }
@@ -93,13 +96,18 @@ export const deleteClient = async (req: AuthRequest, res: Response) => {
   try {
     const { clientId } = req.params;
 
-    const client = await ClientData.findOne({ clientId });
+    // Validate if the ID is a valid MongoDB ObjectId
+    if (!mongoose.Types.ObjectId.isValid(clientId)) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ success: false, error: 'Invalid client ID format.' });
+    }
+
+    const client = await ClientData.findById(clientId);
     if (!client) {
       return res.status(StatusCodes.NOT_FOUND).json({ success: false, error: 'Client not found.' });
     }
 
     await clientService.disconnectClient(clientId);
-    await ClientData.deleteOne({ clientId });
+    await ClientData.findByIdAndDelete(clientId);
 
     res.status(StatusCodes.OK).json({ success: true, message: 'Client deleted successfully.' });
   } catch (error) {
@@ -111,7 +119,13 @@ export const getClientById = async (req: AuthRequest, res: Response) => {
   console.log("GET /api/client/:clientId");
   try {
     const { clientId } = req.params;
-    const client = await ClientData.findOne({ clientId }).select('-session');
+    
+    // Validate if the ID is a valid MongoDB ObjectId
+    if (!mongoose.Types.ObjectId.isValid(clientId)) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ success: false, error: 'Invalid client ID format.' });
+    }
+    
+    const client = await ClientData.findById(clientId).select('-session');
 
     if (!client) {
       return res.status(StatusCodes.NOT_FOUND).json({ success: false, error: 'Client not found.' });
