@@ -1,0 +1,17 @@
+{
+  "type": "users",
+  "field": "activation",
+  "message": "Hi there! 👋 I'm *Teko*, your Malaysia travel buddy on WhatsApp.\n\nTo get started, please enter your 6-digit activation code.",
+  "validation": [
+    {
+      "type": "invalid_format",
+      "error_message": "Hmm, that doesn't look like a 6-digit code.",
+      "suggestion": "Please enter the code exactly as provided — 6 digits, no spaces."
+    },
+    {
+      "type": "code_not_found",
+      "error_message": "Oops! 😅 That code doesn't seem to be valid.",
+      "suggestion": "Please double-check the code and try again. Make sure it hasn't expired or been used."
+    }
+  ]
+} 

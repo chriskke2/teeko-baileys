@@ -1,0 +1,19 @@
+{
+  "type": "onboarding",
+  "field": "country",
+  "sequence": 2,
+  "message": "Where are you from? Please provide your country name (e.g., Malaysia, Singapore, China).",
+  "validation": [
+    { 
+      "type": "not_in_country_list", 
+      "error_message": "Sorry, I don't recognize that country. Please provide a valid country name.",
+      "suggestion": "Examples: Malaysia, Singapore, China, Thailand, Indonesia, Australia, USA, UK, etc."
+    }
+  ],
+  "metadata": {
+    "user_field": "country",
+    "interactive_type": "text",
+    "display_type": "text",
+    "validation_pattern": ""
+  }
+} 

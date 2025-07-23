@@ -25,12 +25,17 @@ if (!process.env.MONGODB_USER_COLLECTION) {
     console.warn('Missing MONGODB_USER_COLLECTION environment variable. Using default collection name.');
 }
 
+if (!process.env.MONGODB_PREDEFINED_COLLECTION) {
+    console.warn('Missing MONGODB_PREDEFINED_COLLECTION environment variable. Using default collection name "predefined_messages".');
+}
+
 const config = {
   port: process.env.PORT || 3000,
   mongodb_uri: process.env.MONGODB_URI,
   mongodb_collection: process.env.MONGODB_CLIENT_COLLECTION || 'clients',
   mongodb_package_collection: process.env.MONGODB_PACKAGE_COLLECTION || 'packages',
   mongodb_user_collection: process.env.MONGODB_USER_COLLECTION || 'users',
+  mongodb_predefined_collection: process.env.MONGODB_PREDEFINED_COLLECTION || 'predefined_messages',
   jwt_key: process.env.JWTKEY,
   activation_msg: process.env.ACTIVATION_MSG || 'Thank you for subscribing to our service! Your activation code is: *{code}*\n\nPlease use this code to activate your subscription.',
   user_exist_false_msg: process.env.USER_EXIST_FALSE_MSG || 'Sorry, your number is not registered with our service. Please subscribe first.',

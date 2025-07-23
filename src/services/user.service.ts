@@ -1,17 +1,16 @@
 import UserData from '../models/user.model';
 import packageService from './package.service';
+import onboardingService from './onboarding.service';
+import activationService from './activation.service';
+import messagingService from './messaging.service';
+import { UserState } from './activation.service';
 import mongoose from 'mongoose';
-import config from '../config';
 
 // Forward declaration to avoid circular dependency
 let clientService: any;
 setTimeout(() => {
   clientService = require('./client.service').default;
 }, 0);
-
-interface UserType {
-  status: 'PENDING_ACTIVATION' | 'ONBOARDING' | 'EXPIRED';
-}
 
 class UserService {
   private static instance: UserService;
@@ -34,12 +33,12 @@ class UserService {
       // Check if a user with this wa_num already exists with PENDING_ACTIVATION or ONBOARDING status
       const existingUser = await UserData.findOne({ 
         wa_num: userData.wa_num,
-        status: { $in: ['PENDING_ACTIVATION', 'ONBOARDING'] }
+        status: { $in: [UserState.PENDING_ACTIVATION, UserState.ONBOARDING] }
       });
       
       if (existingUser) {
-        const userWithType = existingUser.toObject() as UserType;
-        if (userWithType.status === 'PENDING_ACTIVATION') {
+        const userWithType = existingUser.toObject();
+        if (userWithType.status === UserState.PENDING_ACTIVATION) {
           throw new Error('User already exists with pending activation. Please use the activation code sent earlier.');
         } else {
           throw new Error('User is already subscribed with this WhatsApp number.');
@@ -77,7 +76,7 @@ class UserService {
       // Send activation message if clientId is provided
       if (userData.clientId) {
         // Try to send activation message, but don't block the user creation if it fails
-        this.sendActivationMessage(userData.clientId, userData.wa_num, code)
+        activationService.sendActivationMessage(userData.clientId, userData.wa_num, code)
           .then(success => {
             if (success) {
               console.log(`Activation message sent to ${userData.wa_num}`);
@@ -100,14 +99,23 @@ class UserService {
    */
   public async activateUser(subscriptionData: { wa_num: number; code: string }): Promise<any> {
     try {
-      // Find user with matching wa_num and code
+      // Find user with matching wa_num
       const user = await UserData.findOne({ 
-        wa_num: subscriptionData.wa_num, 
-        code: subscriptionData.code 
+        wa_num: subscriptionData.wa_num
       });
 
       if (!user) {
-        throw new Error('Invalid WhatsApp number or verification code');
+        throw new Error('Invalid WhatsApp number');
+      }
+
+      // Check if code format is valid (should be 6 digits)
+      if (!/^\d{6}$/.test(subscriptionData.code)) {
+        throw new Error('Invalid code format');
+      }
+
+      // Check if code matches
+      if (user.code !== subscriptionData.code) {
+        throw new Error('Invalid verification code');
       }
 
       // Check if already subscribed
@@ -139,7 +147,7 @@ class UserService {
         { 
           subscription_start: subscriptionStart,
           subscription_end: subscriptionEnd,
-          status: 'ONBOARDING'
+          status: UserState.ONBOARDING
         },
         { new: true }
       );
@@ -187,7 +195,6 @@ class UserService {
 
   /**
    * Check if a user's subscription is expired and update status if needed
-   * This can be called from various endpoints or middleware
    * @param userId User ID or WhatsApp number
    * @param isWaNumber Set to true if userId is actually a WhatsApp number
    */
@@ -209,55 +216,23 @@ class UserService {
         throw new Error('User not found');
       }
 
-      // If user has active subscription and an end date
-      const userWithType = user.toObject() as UserType;
-      if (userWithType.status === 'ONBOARDING' && user.subscription_end) {
+      // Check if user has active subscription (ONBOARDING or ACTIVE status) and an end date
+      if ((user.status === UserState.ONBOARDING || user.status === UserState.ACTIVE) && user.subscription_end) {
         const now = new Date();
         const endDate = new Date(user.subscription_end);
         
         // Check if the subscription has expired
         if (now > endDate) {
           // Update the status to EXPIRED
-          user.status = 'EXPIRED';
+          user.status = UserState.EXPIRED;
           await user.save();
+          console.log(`User ${user.wa_num} subscription expired. Status updated to EXPIRED.`);
         }
       }
 
       return user;
     } catch (error) {
       throw error;
-    }
-  }
-
-  /**
-   * Send activation message to user
-   * @param clientId WhatsApp client ID to use for sending
-   * @param waNumber WhatsApp number to send message to
-   * @param code Activation code to include in message
-   */
-  public async sendActivationMessage(clientId: string, waNumber: number, code: string): Promise<boolean> {
-    try {
-      const whatsappClient = clientService.getClient(clientId);
-      
-      if (!whatsappClient) {
-        console.error(`No active WhatsApp client found with ID ${clientId}`);
-        return false;
-      }
-
-      // Format number according to WhatsApp standard
-      const recipient = `${waNumber}@s.whatsapp.net`;
-      
-      // Use the activation message template from config and replace {code} with the actual code
-      const messageTemplate = config.activation_msg;
-      const message = messageTemplate.replace('{code}', code);
-
-      // Send the message
-      await whatsappClient.sendMessage(recipient, { text: message });
-      console.log(`Activation message sent to ${recipient}`);
-      return true;
-    } catch (error) {
-      console.error(`Failed to send activation message to ${waNumber}:`, error);
-      return false;
     }
   }
 
@@ -278,7 +253,6 @@ class UserService {
       }
       
       // If we can get the client, it's likely connected
-      // For additional validation, we could check the client's state
       return true;
     } catch (error) {
       console.error(`Error checking client status: ${error}`);
@@ -287,7 +261,7 @@ class UserService {
   }
 
   /**
-   * Process incoming WhatsApp message for activation codes and gender responses
+   * Main message handler that routes incoming messages based on user state
    * @param message The message object from Baileys
    * @param clientId The WhatsApp client ID
    */
@@ -311,10 +285,11 @@ class UserService {
         return;
       }
       
-      // Get WhatsApp client
-      const whatsappClient = clientService.getClient(clientId);
-      if (!whatsappClient) {
-        console.log('WhatsApp client not found for clientId:', clientId);
+      // Extract message text
+      let messageText = messagingService.extractMessageText(message);
+      
+      // Check if message is empty
+      if (!messageText) {
         return;
       }
       
@@ -324,135 +299,46 @@ class UserService {
       // Find the user in the database
       const user = await UserData.findOne({ wa_num: waNumber });
       if (!user) {
-        // User not found - send not registered message
-        await whatsappClient.sendMessage(remoteJid, { 
-          text: config.user_exist_false_msg 
-        });
+        // User not found - handle with not registered message
+        await activationService.handleUnregisteredUser(clientId, remoteJid);
         return;
       }
 
-      console.log(`Received message from user ${waNumber}, status: ${user.status}, gender: ${user.gender}`);
+      console.log(`Received message from user ${waNumber}, status: ${user.status}, current_step: ${user.current_step || 'none'}`);
 
-      // Extract text from message
-      let messageText = '';
-      
-      // Handle different message types
-      if (message.message?.conversation) {
-        messageText = message.message.conversation.trim();
-      } else if (message.message?.extendedTextMessage?.text) {
-        messageText = message.message.extendedTextMessage.text.trim();
-      }
-      
-      // Check if message is empty
-      if (!messageText) {
-        return;
-      }
-      
-      // Check if the user status is ONBOARDING - handle gender input
-      if (user.status === 'ONBOARDING' && user.gender === 'not_specified') {
-        console.log(`Processing gender input for user ${waNumber}: "${messageText}"`);
-        
-        // Process gender selection based on text input
-        let gender = 'not_specified';
-        
-        // Normalize input to lowercase for easier comparison
-        const normalizedInput = messageText.toLowerCase();
-        
-        if (normalizedInput.includes('male') || normalizedInput === 'm') {
-          gender = 'male';
-        } else if (normalizedInput.includes('female') || normalizedInput === 'f') {
-          gender = 'female';
-        } else if (normalizedInput.includes('other') || normalizedInput.includes('prefer not')) {
-          gender = 'other';
-        } else {
-          // Unrecognized response, ask again
-          console.log(`Unrecognized gender response: "${messageText}"`);
-          await whatsappClient.sendMessage(remoteJid, { 
-            text: 'Sorry, I didn\'t understand that. ' + config.obq1_msg
-          });
-          return;
-        }
-        
-        console.log(`Updating gender for user ${waNumber} to: ${gender}`);
-        
-        // Update the user's gender - use findOneAndUpdate for better reliability
-        const updatedUser = await UserData.findOneAndUpdate(
-          { wa_num: waNumber },
-          { gender: gender },
-          { new: true }
-        );
-        
-        console.log(`Updated user result: ${JSON.stringify(updatedUser)}`);
-        
-        // Send confirmation
-        await whatsappClient.sendMessage(remoteJid, { 
-          text: `Thank you! Your gender preference has been saved.` 
-        });
-        
-        console.log(`Gender update confirmed for user ${waNumber}`);
-        return;
-      }
-      
-      // Check if the user status is PENDING_ACTIVATION
-      if (user.status === 'PENDING_ACTIVATION') {
-        // Check if the message text matches the activation code
-        if (messageText === user.code) {
-          // Activate the user
-          const packageInfo = await packageService.getPackageById(user.package_id);
-          if (!packageInfo) {
-            console.error(`Package with ID '${user.package_id}' not found`);
-            await whatsappClient.sendMessage(remoteJid, { 
-              text: 'Error: Package not found. Please contact support.' 
-            });
-            return;
+      // Route message based on user state
+      switch (user.status) {
+        case UserState.PENDING_ACTIVATION:
+          await activationService.handleActivationMessage(user, messageText, clientId, remoteJid, senderName);
+          break;
+          
+        case UserState.ONBOARDING:
+          // If user has a current_step, use that directly
+          if (user.current_step) {
+            await onboardingService.processStep(user, messageText, clientId, remoteJid, user.current_step);
           }
+          // Otherwise fall back to the old determination logic
+          else if (user.gender === 'not_specified' && (!user.segmentation || !user.segmentation.gender)) {
+            await onboardingService.handleGenderSelection(user, messageText, clientId, remoteJid);
+          } else {
+            // Handle next onboarding step or default response
+            await onboardingService.handleNextOnboardingStep(user, messageText, clientId, remoteJid);
+          }
+          break;
           
-          // Set subscription start date to now
-          const subscriptionStart = new Date();
-          let subscriptionEnd = null;
+        case UserState.ACTIVE:
+          // Handle messages from active users
+          await this.handleActiveUserMessage(user, messageText, clientId, remoteJid, senderName);
+          break;
           
-          // Calculate subscription end date based on package
-          subscriptionEnd = await packageService.calculateSubscriptionEnd(
-            user.package_id, 
-            subscriptionStart
-          );
+        case UserState.EXPIRED:
+          // Handle expired user messages
+          await activationService.handleExpiredUser(user, messageText, clientId, remoteJid);
+          break;
           
-          // Update user with subscription dates and status
-          await UserData.findByIdAndUpdate(
-            user._id,
-            { 
-              subscription_start: subscriptionStart,
-              subscription_end: subscriptionEnd,
-              status: 'ONBOARDING'
-            }
-          );
-          
-          // Format date for display
-          const formattedEndDate = subscriptionEnd ? 
-            subscriptionEnd.toLocaleDateString('en-US', { 
-              year: 'numeric', 
-              month: 'long', 
-              day: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit'
-            }) : 
-            'N/A';
-          
-          // Send success message
-          const successMessage = `Hi ${senderName}, your activation to *${packageInfo.name}* has succeeded! Your subscription will end on *${formattedEndDate}*`;
-          await whatsappClient.sendMessage(remoteJid, { text: successMessage });
-          
-          // Send greeting message
-          await whatsappClient.sendMessage(remoteJid, { text: config.greeting_msg });
-
-          // Send gender selection message
-          await this.sendGenderSelectionMessage(clientId, remoteJid);
-        } else {
-          // Invalid activation code
-          await whatsappClient.sendMessage(remoteJid, { 
-            text: config.activation_failed_msg 
-          });
-        }
+        default:
+          console.log(`Unhandled user state: ${user.status}`);
+          break;
       }
     } catch (error) {
       console.error('Error processing incoming message:', error);
@@ -460,29 +346,45 @@ class UserService {
   }
 
   /**
-   * Send gender selection message as text question
-   * @param clientId WhatsApp client ID to use for sending
-   * @param recipient WhatsApp number to send to
+   * Handle messages from active users (after onboarding)
+   * @param user The user object
+   * @param messageText The message text
+   * @param clientId WhatsApp client ID
+   * @param recipient Recipient JID
+   * @param senderName Sender's name
    */
-  public async sendGenderSelectionMessage(clientId: string, recipient: string): Promise<boolean> {
+  private async handleActiveUserMessage(
+    user: any,
+    messageText: string,
+    clientId: string,
+    recipient: string,
+    senderName: string
+  ): Promise<void> {
     try {
-      const whatsappClient = clientService.getClient(clientId);
-      if (!whatsappClient) {
-        console.error(`No active WhatsApp client found with ID ${clientId}`);
-        return false;
-      }
-
-      // Send text-based gender question using environment variable
-      await whatsappClient.sendMessage(recipient, {
-        text: config.obq1_msg
-      });
-      
-      console.log(`Gender selection message sent to ${recipient}`);
-      return true;
+      // Here you'll implement the main chatbot functionality for active users
+      // For now, just respond with a simple message
+      const segmentationInfo = user.segmentation ? 
+        `Based on your preferences (Gender: ${user.segmentation.gender || 'Unknown'}, Country: ${user.segmentation.country || 'Unknown'})` : 
+        '';
+        
+      await messagingService.sendRawTextMessage(
+        clientId,
+        recipient,
+        `Hello ${senderName}! 👋 ${segmentationInfo}\n\nHow can I help you today?`
+      );
     } catch (error) {
-      console.error(`Failed to send gender selection message:`, error);
-      return false;
+      console.error('Error handling active user message:', error);
     }
+  }
+
+  // Legacy method for backward compatibility
+  public async sendActivationMessage(clientId: string, waNumber: number, code: string): Promise<boolean> {
+    return activationService.sendActivationMessage(clientId, waNumber, code);
+  }
+  
+  // Legacy method for backward compatibility
+  public async sendGenderSelectionMessage(clientId: string, recipient: string): Promise<boolean> {
+    return onboardingService.sendOptionsMessage('gender', 'onboarding', clientId, recipient);
   }
 }
 

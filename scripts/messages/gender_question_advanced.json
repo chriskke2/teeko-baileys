@@ -1,0 +1,37 @@
+{
+  "type": "onboarding",
+  "field": "gender",
+  "sequence": 1,
+  "message": "To help me provide better recommendations, could you tell me your gender?",
+  "validation": [
+    {
+      "type": "invalid_selection",
+      "error_message": "Please select a valid gender option."
+    }
+  ],
+  "options": [
+    {
+      "value": "male",
+      "display": "Male",
+      "aliases": ["m", "man", "boy"],
+      "mapping": "male"
+    },
+    {
+      "value": "female",
+      "display": "Female",
+      "aliases": ["f", "woman", "girl"],
+      "mapping": "female"
+    },
+    {
+      "value": "other",
+      "display": "Prefer not to say",
+      "aliases": ["prefer not", "other", "none"],
+      "mapping": "other"
+    }
+  ],
+  "metadata": {
+    "user_field": "gender",
+    "interactive_type": "list",
+    "response_processor": "direct_mapping"
+  }
+} 

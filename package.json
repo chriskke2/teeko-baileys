@@ -7,7 +7,14 @@
     "start:local": "dotenv -e .env.local ts-node src/index.ts",
     "start:dev": "dotenv -e .env.development ts-node src/index.ts",
     "start": "dotenv -e .env.production ts-node src/index.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "messages": "node scripts/manage-predefined-messages.js",
+    "migrate:segmentation": "node scripts/migrate-to-segmentation.js",
+    "migrate:active-status": "node scripts/update-status-to-active.js",
+    "check:segmentation": "node scripts/check-segmentation-data.js",
+    "fix:country": "node scripts/fix-country-data.js",
+    "test:trip-type": "node scripts/test-trip-type.js",
+    "fix:onboarding": "node scripts/fix-onboarding-steps.js"
   },
   "keywords": [
     "whatsapp",
@@ -20,6 +27,7 @@
     "@cacheable/node-cache": "^1.4.0",
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^6.7.18",
+    "commander": "^11.1.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.0",
     "express": "^5.1.0",

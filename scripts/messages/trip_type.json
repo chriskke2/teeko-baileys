@@ -1,0 +1,37 @@
+{
+  "type": "onboarding",
+  "field": "trip_type",
+  "sequence": 3,
+  "message": "What kind of trip are you on?",
+  "validation": [
+    {
+      "type": "invalid_selection",
+      "error_message": "Please select a valid trip type."
+    }
+  ],
+  "options": [
+    {
+      "value": "holiday",
+      "display": "Holiday 🌴",
+      "aliases": ["holiday", "vacation", "leisure", "1"],
+      "mapping": "holiday"
+    },
+    {
+      "value": "business",
+      "display": "Business 💼",
+      "aliases": ["business", "work", "2"],
+      "mapping": "business"
+    },
+    {
+      "value": "transit",
+      "display": "Transit 🛬",
+      "aliases": ["transit", "stop", "layover", "3"],
+      "mapping": "transit"
+    }
+  ],
+  "metadata": {
+    "user_field": "trip_type",
+    "interactive_type": "list",
+    "response_processor": "direct_mapping"
+  }
+} 

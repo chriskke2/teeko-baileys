@@ -1,0 +1,17 @@
+{
+  "type": "onboarding",
+  "field": "gender",
+  "message": "To help me provide better recommendations, could you tell me your gender?",
+  "validation": [
+    {
+      "type": "invalid_selection",
+      "error_message": "I didn't quite catch that.",
+      "suggestion": "Please respond with one of the options below."
+    }
+  ],
+  "options": [
+    "Male",
+    "Female",
+    "Prefer not to say"
+  ]
+} 
