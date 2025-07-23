@@ -1,0 +1,11 @@
+{
+  "segmentation_field": "travel_style",
+  "contexts": {
+    "chill": "This user prefers a relaxed travel style, focusing on rest and recharging. They likely enjoy peaceful settings, spa experiences, and laid-back activities.",
+    "see_do": "This user wants to maximize their trip by seeing and doing as much as possible. They likely prefer packed itineraries and hitting all the major attractions.",
+    "hidden_gems": "This user enjoys discovering hidden gems and off-the-beaten-path experiences. They likely prefer authentic local experiences over tourist hotspots.",
+    "adventure": "This user seeks adventure and thrilling experiences. They likely enjoy outdoor activities, physical challenges, and adrenaline-pumping experiences.",
+    "photos": "This user prioritizes capturing great photos during their travels. They likely appreciate scenic viewpoints, Instagram-worthy spots, and visually interesting locations.",
+    "culture": "This user is interested in Malaysian culture and heritage. They likely enjoy museums, historical sites, cultural performances, and authentic local experiences."
+  }
+} 

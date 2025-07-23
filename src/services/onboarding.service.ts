@@ -1,6 +1,8 @@
 import UserData from '../models/user.model';
 import predefinedService from './predefined.service';
 import messagingService from './messaging.service';
+import contextService from './context.service';
+import countryService from './country.service';
 
 // Forward declaration to avoid circular dependency
 let clientService: any;
@@ -153,6 +155,23 @@ class OnboardingService {
         updateData.gender = finalValue;
       }
       
+      // For country field, also set spending_power based on country value
+      if (finalFieldToUpdate === 'country') {
+        // Get the canonical country name for looking up spending power
+        const canonicalCountryName = await countryService.getCanonicalCountryName(messageText);
+        
+        // Get spending power from country service
+        let spendingPower = await countryService.getSpendingPower(messageText);
+        
+        // Default to medium if not found
+        if (!spendingPower) {
+          spendingPower = 'medium';
+        }
+        
+        console.log(`Setting spending_power to ${spendingPower} based on country input: ${messageText} (canonical: ${canonicalCountryName || 'unknown'})`);
+        updateData['segmentation.spending_power'] = spendingPower;
+      }
+      
       // Update the user
       const updatedUser = await UserData.findOneAndUpdate(
         { _id: user._id },
@@ -240,18 +259,60 @@ class OnboardingService {
         // No more steps, onboarding complete - Set status to ACTIVE
         console.log(`Onboarding complete after step: ${currentStep}. Setting user ${user.wa_num} to ACTIVE status.`);
         
-        // Update user status to ACTIVE and clear current_step
-        await UserData.findByIdAndUpdate(user._id, { 
-          status: 'ACTIVE',
-          current_step: null 
-        });
+        // Get the latest user data to ensure we have the most up-to-date segmentation
+        const updatedUser = await UserData.findById(user._id).lean();
+        if (!updatedUser) {
+          console.error(`User ${user.wa_num} not found when completing onboarding`);
+          return;
+        }
         
-        // Send completion message
-        await messagingService.sendRawTextMessage(
-          clientId,
-          recipient,
-          "You've completed all the onboarding questions. Thank you! Your Teko account is now active and ready to use."
+        // Generate context from segmentation data
+        let userContext = '';
+        try {
+          if (updatedUser.segmentation) {
+            console.log(`Generating context for user ${updatedUser.wa_num} with segmentation:`, updatedUser.segmentation);
+            userContext = await contextService.generateFullContext(updatedUser.segmentation);
+            console.log(`Generated context for user ${updatedUser.wa_num}: "${userContext}"`);
+          } else {
+            console.log(`No segmentation data found for user ${updatedUser.wa_num}`);
+          }
+        } catch (error) {
+          console.error(`Error generating context for user ${updatedUser.wa_num}:`, error);
+        }
+        
+        // Update user status to ACTIVE, clear current_step, and save context
+        const result = await UserData.findByIdAndUpdate(
+          updatedUser._id, 
+          { 
+            status: 'ACTIVE',
+            current_step: null,
+            context: userContext
+          },
+          { new: true }
         );
+        
+        console.log(`Updated user ${updatedUser.wa_num} with context:`, result?.context);
+        
+        // Check for onboarding_complete message
+        const completionMessage = await predefinedService.getMessage('onboarding_complete', 'welcome');
+        
+        if (completionMessage) {
+          // Replace template variables
+          let message = completionMessage.message;
+          if (message.includes('{first_name}') && updatedUser.first_name) {
+            message = message.replace('{first_name}', updatedUser.first_name);
+          }
+          
+          // Send personalized completion message
+          await messagingService.sendRawTextMessage(clientId, recipient, message);
+        } else {
+          // Fallback to default message if no predefined message exists
+          await messagingService.sendRawTextMessage(
+            clientId,
+            recipient,
+            "You've completed all the onboarding questions. Thank you! Your Teko account is now active and ready to use."
+          );
+        }
       }
     } catch (error) {
       console.error('Error finding next step:', error);

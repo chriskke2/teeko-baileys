@@ -3,6 +3,7 @@ import packageService from './package.service';
 import onboardingService from './onboarding.service';
 import activationService from './activation.service';
 import messagingService from './messaging.service';
+import webhookService from './webhook.service';
 import { UserState } from './activation.service';
 import mongoose from 'mongoose';
 
@@ -304,6 +305,16 @@ class UserService {
         return;
       }
 
+      // Update first_name if not set or different from sender name
+      const firstName = senderName ? senderName.split(' ')[0] : '';
+      if (!user.first_name || (firstName && user.first_name !== firstName)) {
+        console.log(`Updating first name for user ${waNumber} from "${user.first_name || 'none'}" to "${firstName}"`);
+        await UserData.updateOne(
+          { _id: user._id },
+          { first_name: firstName }
+        );
+      }
+
       console.log(`Received message from user ${waNumber}, status: ${user.status}, current_step: ${user.current_step || 'none'}`);
 
       // Route message based on user state
@@ -320,7 +331,7 @@ class UserService {
           // Otherwise fall back to the old determination logic
           else if (user.gender === 'not_specified' && (!user.segmentation || !user.segmentation.gender)) {
             await onboardingService.handleGenderSelection(user, messageText, clientId, remoteJid);
-          } else {
+        } else {
             // Handle next onboarding step or default response
             await onboardingService.handleNextOnboardingStep(user, messageText, clientId, remoteJid);
           }
@@ -361,19 +372,113 @@ class UserService {
     senderName: string
   ): Promise<void> {
     try {
-      // Here you'll implement the main chatbot functionality for active users
-      // For now, just respond with a simple message
-      const segmentationInfo = user.segmentation ? 
-        `Based on your preferences (Gender: ${user.segmentation.gender || 'Unknown'}, Country: ${user.segmentation.country || 'Unknown'})` : 
-        '';
+      // Extract phone number from recipient JID
+      const phoneNumber = recipient.split('@')[0];
+      
+      // Prepare webhook payload
+      const webhookPayload = {
+        message: messageText,
+        phoneNumber,
+        userId: user._id.toString(),
+        context: user.context || '',
+        segmentation: user.segmentation || {},
+        first_name: user.first_name || '',
+        clientId
+      };
+      
+      console.log(`Forwarding message from active user ${phoneNumber} to webhook`);
+      
+      // Define fallback function to send after 10 seconds
+      const fallbackFunction = async () => {
+        console.warn(`Webhook response taking too long for user ${phoneNumber}. Sending interim message.`);
+        await messagingService.sendRawTextMessage(
+          clientId,
+          recipient,
+          "We're processing your request. Please wait a moment..."
+        );
+      };
+      
+      // Define response handler function
+      const responseHandler = async (response: any) => {
+        if (response && response.message) {
+          // Send the response message from the webhook
+          console.log(`Received webhook response for user ${phoneNumber}. Sending message: ${response.message.substring(0, 50)}...`);
+          
+          try {
+            await messagingService.sendRawTextMessage(
+              clientId,
+              recipient,
+              response.message
+            );
+            console.log(`Successfully sent webhook response to user ${phoneNumber}`);
+          } catch (error) {
+            console.error(`Error sending webhook response to user ${phoneNumber}:`, error);
+            
+            // Try again with a simpler message if there was an error
+            try {
+              await messagingService.sendRawTextMessage(
+                clientId,
+                recipient,
+                "We received your message but encountered an issue sending the full response. Please try again."
+              );
+            } catch (retryError) {
+              console.error(`Failed to send even the error message to user ${phoneNumber}:`, retryError);
+            }
+          }
+        } else if (response && response.status === 'error') {
+          // Send error message
+          console.error(`Webhook returned error for user ${phoneNumber}: ${response.error || 'Unknown error'}`);
+          
+          try {
+            await messagingService.sendRawTextMessage(
+              clientId,
+              recipient,
+              "Sorry, we couldn't process your request at this time. Please try again later."
+            );
+          } catch (error) {
+            console.error(`Error sending error message to user ${phoneNumber}:`, error);
+          }
+        } else {
+          console.warn(`Webhook response for user ${phoneNumber} did not contain a message.`);
+          
+          try {
+            await messagingService.sendRawTextMessage(
+              clientId,
+              recipient,
+              "Thank you for your message. We're processing your request."
+            );
+          } catch (error) {
+            console.error(`Error sending default message to user ${phoneNumber}:`, error);
+          }
+        }
+      };
+      
+      // Send the webhook request with fallback and response handlers
+      const webhookSent = await webhookService.sendMessageWebhook(
+        webhookPayload, 
+        fallbackFunction,
+        responseHandler
+      );
+      
+      if (!webhookSent) {
+        console.warn(`Webhook failed for user ${phoneNumber}. Sending fallback message.`);
         
+        // Send a simple acknowledgment if webhook fails completely
+        await messagingService.sendRawTextMessage(
+          clientId,
+          recipient,
+          "We're having trouble connecting to our services. Please try again later."
+        );
+      }
+    } catch (error) {
+      console.error('Error handling active user message:', error);
+      
+      // Send a simple error message
       await messagingService.sendRawTextMessage(
         clientId,
         recipient,
-        `Hello ${senderName}! 👋 ${segmentationInfo}\n\nHow can I help you today?`
+        "Sorry, we encountered an error processing your message. Please try again later."
       );
-    } catch (error) {
-      console.error('Error handling active user message:', error);
     }
   }
 

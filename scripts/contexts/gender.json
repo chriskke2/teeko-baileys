@@ -1,0 +1,8 @@
+{
+  "segmentation_field": "gender",
+  "contexts": {
+    "male": "This user identifies as male.",
+    "female": "This user identifies as female.",
+    "other": "This user prefers not to disclose their gender."
+  }
+} 

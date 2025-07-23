@@ -1,0 +1,22 @@
+{
+  "type": "onboarding",
+  "field": "social_type",
+  "sequence": 5,
+  "message": "Are you traveling solo or with others?",
+  "validation": [
+    {
+      "type": "invalid_selection",
+      "error_message": "Please select a valid option for your travel group."
+    }
+  ],
+  "options": [
+    { "value": "solo", "display": "Solo 🧍‍♂️", "aliases": ["solo", "alone", "1"], "mapping": "solo" },
+    { "value": "couple", "display": "Couple 💑", "aliases": ["couple", "partner", "2"], "mapping": "couple" },
+    { "value": "group", "display": "Group 👥", "aliases": ["group", "friends", "family", "3"], "mapping": "group" }
+  ],
+  "metadata": {
+    "user_field": "social_type",
+    "interactive_type": "list",
+    "response_processor": "direct_mapping"
+  }
+} 

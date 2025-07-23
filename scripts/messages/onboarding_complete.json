@@ -1,0 +1,8 @@
+{
+  "type": "onboarding_complete",
+  "field": "welcome",
+  "message": "Well done, {first_name}. You are all setup, let's explore Malaysia together ❤️🇲🇾\n I can help with:\n🍽 Find food you'll love  \n🧭 Guide you anywhere around Peninsular Malaysia  \n📅 Plan your day, even if you've got 3 hours only\n🎁 And... unlock local deals just for you\n What do you want to do first?\n☑ Food Near Me\n☑ How to Get Somewhere\n☑ Plan My Day\n☑ View My Deals",
+  "metadata": {
+    "template_variables": ["first_name"]
+  }
+} 

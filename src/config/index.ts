@@ -29,6 +29,18 @@ if (!process.env.MONGODB_PREDEFINED_COLLECTION) {
     console.warn('Missing MONGODB_PREDEFINED_COLLECTION environment variable. Using default collection name "predefined_messages".');
 }
 
+if (!process.env.MONGODB_CONTEXT_COLLECTION) {
+    console.warn('Missing MONGODB_CONTEXT_COLLECTION environment variable. Using default collection name "contexts".');
+}
+
+if (!process.env.MONGODB_COUNTRIES_COLLECTION) {
+    console.warn('Missing MONGODB_COUNTRIES_COLLECTION environment variable. Using default collection name "countries".');
+}
+
+if (!process.env.WEBHOOK_URL) {
+    console.warn('Missing WEBHOOK_URL environment variable. Webhook functionality will not work.');
+}
+
 const config = {
   port: process.env.PORT || 3000,
   mongodb_uri: process.env.MONGODB_URI,
@@ -36,6 +48,9 @@ const config = {
   mongodb_package_collection: process.env.MONGODB_PACKAGE_COLLECTION || 'packages',
   mongodb_user_collection: process.env.MONGODB_USER_COLLECTION || 'users',
   mongodb_predefined_collection: process.env.MONGODB_PREDEFINED_COLLECTION || 'predefined_messages',
+  mongodb_context_collection: process.env.MONGODB_CONTEXT_COLLECTION || 'contexts',
+  mongodb_countries_collection: process.env.MONGODB_COUNTRIES_COLLECTION || 'countries',
+  webhook_url: process.env.WEBHOOK_URL,
   jwt_key: process.env.JWTKEY,
   activation_msg: process.env.ACTIVATION_MSG || 'Thank you for subscribing to our service! Your activation code is: *{code}*\n\nPlease use this code to activate your subscription.',
   user_exist_false_msg: process.env.USER_EXIST_FALSE_MSG || 'Sorry, your number is not registered with our service. Please subscribe first.',

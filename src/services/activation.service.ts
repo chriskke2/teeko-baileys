@@ -147,14 +147,19 @@ class ActivationService {
     // Determine if there are any onboarding steps
     const hasOnboardingSteps = firstStep !== null;
     
-    // Update user with subscription dates and appropriate status
+    // Extract first name from sender name (use the first word)
+    const firstName = senderName ? senderName.split(' ')[0] : '';
+    console.log(`Storing first name for user ${user.wa_num}: "${firstName}"`);
+    
+    // Update user with subscription dates, first name, and appropriate status
     await UserData.findByIdAndUpdate(
       user._id,
       { 
         subscription_start: subscriptionStart,
         subscription_end: subscriptionEnd,
         status: hasOnboardingSteps ? UserState.ONBOARDING : 'ACTIVE', // Set to ACTIVE if no onboarding steps
-        current_step: hasOnboardingSteps ? firstStep : null // Initialize current_step if starting onboarding
+        current_step: hasOnboardingSteps ? firstStep : null, // Initialize current_step if starting onboarding
+        first_name: firstName // Store the first name
       }
     );
     
@@ -169,7 +174,7 @@ class ActivationService {
       }) : 'N/A';
     
     // Send success message
-    const successMessage = `Hi ${senderName}, your activation to *${packageInfo.name}* has succeeded! Your subscription will end on *${formattedEndDate}*`;
+    const successMessage = `Hi ${firstName || senderName}, your activation to *${packageInfo.name}* has succeeded! Your subscription will end on *${formattedEndDate}*`;
     await messagingService.sendRawTextMessage(clientId, recipient, successMessage);
     
     // Send greeting message from predefined messages

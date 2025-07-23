@@ -1,0 +1,8 @@
+{
+  "segmentation_field": "spending_power",
+  "contexts": {
+    "low": "This user is likely a high-spending traveler. They are comfortable with premium recommendations and can afford mid to high-end services.",
+    "medium": "This user has moderate spending power. They value good experiences at reasonable prices and are open to both budget and mid-range options.",
+    "high": "This user is likely budget-conscious. Please suggest affordable, high-value experiences and prioritize low-cost food, transport, and attractions."
+  }
+} 

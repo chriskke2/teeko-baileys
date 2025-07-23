@@ -1,0 +1,8 @@
+{
+  "segmentation_field": "trip_type",
+  "contexts": {
+    "holiday": "This user is on holiday and likely interested in leisure activities, attractions, and experiences.",
+    "business": "This user is traveling for business and may need information about work-friendly venues, efficient transportation, and professional services.",
+    "transit": "This user is in transit and may need information about short-term activities, airport facilities, and quick city experiences."
+  }
+} 

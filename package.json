@@ -14,7 +14,12 @@
     "check:segmentation": "node scripts/check-segmentation-data.js",
     "fix:country": "node scripts/fix-country-data.js",
     "test:trip-type": "node scripts/test-trip-type.js",
-    "fix:onboarding": "node scripts/fix-onboarding-steps.js"
+    "fix:onboarding": "node scripts/fix-onboarding-steps.js",
+    "contexts": "node scripts/import-contexts.js",
+    "context:import": "node scripts/import-contexts.js",
+    "context:update-users": "node scripts/update-user-contexts.js",
+    "context:test": "node scripts/test-context-generation.js",
+    "context:check": "node scripts/check-context-collection.js"
   },
   "keywords": [
     "whatsapp",
@@ -27,6 +32,7 @@
     "@cacheable/node-cache": "^1.4.0",
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^6.7.18",
+    "axios": "^1.6.7",
     "commander": "^11.1.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.0",

@@ -1,0 +1,8 @@
+{
+  "segmentation_field": "social_type",
+  "contexts": {
+    "solo": "This user is traveling solo and may appreciate recommendations for solo-friendly activities, safety tips, and opportunities to meet other travelers.",
+    "couple": "This user is traveling as a couple and may be interested in romantic experiences, couple-friendly activities, and intimate dining options.",
+    "group": "This user is traveling with a group and may need recommendations for group-friendly venues, activities that accommodate multiple people, and group dining options."
+  }
+} 

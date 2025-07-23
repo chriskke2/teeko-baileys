@@ -1,0 +1,7 @@
+{
+  "segmentation_field": "country",
+  "contexts": {
+    "malaysian": "This user is from Malaysia and likely familiar with local customs and locations.",
+    "foreigner": "This user is a foreigner visiting Malaysia and may need more guidance about local customs, transportation, and attractions."
+  }
+} 

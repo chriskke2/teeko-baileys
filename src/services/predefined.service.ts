@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import config from '../config';
+import countryService from './country.service';
 
 // Define the schema for the PredefinedData model
 const validationSchema = new mongoose.Schema({
@@ -135,194 +136,6 @@ class PredefinedService {
   }
 
   /**
-   * Common country names and their mapping to malaysian/foreigner
-   * This allows flexible validation of user input
-   */
-  private countryMappings: Record<string, string> = {
-    // Malaysian entries
-    'malaysia': 'malaysian',
-    'malaysian': 'malaysian',
-    'my': 'malaysian',
-    'msia': 'malaysian',
-    
-    // Common foreigner countries - Southeast Asia
-    'singapore': 'foreigner',
-    'sg': 'foreigner',
-    'singaporean': 'foreigner',
-    'thailand': 'foreigner',
-    'thai': 'foreigner',
-    'indonesia': 'foreigner',
-    'indonesian': 'foreigner',
-    'philippines': 'foreigner',
-    'filipino': 'foreigner',
-    'vietnam': 'foreigner',
-    'vietnamese': 'foreigner',
-    'cambodia': 'foreigner',
-    'cambodian': 'foreigner',
-    'laos': 'foreigner',
-    'laotian': 'foreigner',
-    'myanmar': 'foreigner',
-    'burmese': 'foreigner',
-    'brunei': 'foreigner',
-    
-    // Common foreigner countries - East Asia
-    'china': 'foreigner',
-    'chinese': 'foreigner',
-    'prc': 'foreigner',
-    'japan': 'foreigner',
-    'japanese': 'foreigner',
-    'korea': 'foreigner',
-    'south korea': 'foreigner',
-    'korean': 'foreigner',
-    'taiwan': 'foreigner',
-    'taiwanese': 'foreigner',
-    'hong kong': 'foreigner',
-    
-    // Other common foreigner entries
-    'usa': 'foreigner',
-    'us': 'foreigner',
-    'united states': 'foreigner',
-    'america': 'foreigner',
-    'american': 'foreigner',
-    'uk': 'foreigner',
-    'united kingdom': 'foreigner',
-    'british': 'foreigner',
-    'england': 'foreigner',
-    'australia': 'foreigner',
-    'australian': 'foreigner',
-    'canada': 'foreigner',
-    'canadian': 'foreigner',
-    'germany': 'foreigner',
-    'german': 'foreigner',
-    'france': 'foreigner',
-    'french': 'foreigner',
-    'italy': 'foreigner',
-    'italian': 'foreigner',
-    'spain': 'foreigner',
-    'spanish': 'foreigner',
-    'india': 'foreigner',
-    'indian': 'foreigner',
-    
-    // Additional European countries
-    'netherlands': 'foreigner',
-    'dutch': 'foreigner',
-    'belgium': 'foreigner',
-    'belgian': 'foreigner',
-    'sweden': 'foreigner',
-    'swedish': 'foreigner',
-    'norway': 'foreigner',
-    'norwegian': 'foreigner',
-    'denmark': 'foreigner',
-    'danish': 'foreigner',
-    'finland': 'foreigner',
-    'finnish': 'foreigner',
-    'poland': 'foreigner',
-    'polish': 'foreigner',
-    'portugal': 'foreigner',
-    'portuguese': 'foreigner',
-    'switzerland': 'foreigner',
-    'swiss': 'foreigner',
-    'austria': 'foreigner',
-    'austrian': 'foreigner',
-    'ireland': 'foreigner',
-    'irish': 'foreigner',
-    'greece': 'foreigner',
-    'greek': 'foreigner',
-    
-    // Additional Asian countries
-    'bangladesh': 'foreigner',
-    'bangladeshi': 'foreigner',
-    'pakistan': 'foreigner',
-    'pakistani': 'foreigner',
-    'nepal': 'foreigner',
-    'nepalese': 'foreigner',
-    'sri lanka': 'foreigner',
-    'sri lankan': 'foreigner',
-    'maldives': 'foreigner',
-    'maldivian': 'foreigner',
-    
-    // Middle East
-    'uae': 'foreigner',
-    'united arab emirates': 'foreigner',
-    'saudi arabia': 'foreigner',
-    'saudi': 'foreigner',
-    'qatar': 'foreigner',
-    'qatari': 'foreigner',
-    'bahrain': 'foreigner',
-    'kuwait': 'foreigner',
-    'oman': 'foreigner',
-    'iran': 'foreigner',
-    'iranian': 'foreigner',
-    'iraq': 'foreigner',
-    'iraqi': 'foreigner',
-    'israel': 'foreigner',
-    'israeli': 'foreigner',
-    'turkey': 'foreigner',
-    'turkish': 'foreigner',
-    
-    // Africa
-    'egypt': 'foreigner',
-    'egyptian': 'foreigner',
-    'south africa': 'foreigner',
-    'nigeria': 'foreigner',
-    'nigerian': 'foreigner',
-    'kenya': 'foreigner',
-    'kenyan': 'foreigner',
-    'morocco': 'foreigner',
-    'moroccan': 'foreigner',
-    
-    // Oceania
-    'new zealand': 'foreigner',
-    'kiwi': 'foreigner',
-    'nz': 'foreigner',
-    'fiji': 'foreigner',
-    'fijian': 'foreigner',
-    
-    // Americas
-    'brazil': 'foreigner',
-    'brazilian': 'foreigner',
-    'mexico': 'foreigner',
-    'mexican': 'foreigner',
-    'argentina': 'foreigner',
-    'argentinian': 'foreigner',
-    'chile': 'foreigner',
-    'chilean': 'foreigner',
-    'colombia': 'foreigner',
-    'colombian': 'foreigner',
-    'peru': 'foreigner',
-    'peruvian': 'foreigner',
-    
-    // Generic
-    'other': 'foreigner',
-    'others': 'foreigner',
-    'foreigner': 'foreigner',
-    'foreign': 'foreigner'
-  };
-
-  /**
-   * Validate a country input and check if it's a known country
-   * @param input User's country input
-   * @returns Whether the input is a valid country
-   */
-  private isValidCountry(input: string): boolean {
-    const normalized = input.toLowerCase().trim();
-    
-    // Only accept countries we explicitly have in our mapping
-    // This is more restrictive but ensures only valid countries are accepted
-    return normalized in this.countryMappings;
-  }
-
-  /**
-   * Map a country input to malaysian/foreigner classification
-   * @param input User's country input
-   * @returns 'malaysian' or 'foreigner'
-   */
-  private mapCountryValue(input: string): string {
-    const normalized = input.toLowerCase().trim();
-    return this.countryMappings[normalized] || 'foreigner';
-  }
-
-  /**
    * Get option values for a specific message type and field
    * @param type The message type (e.g., 'onboarding')
    * @param field The message field (e.g., 'gender')
@@ -363,7 +176,7 @@ class PredefinedService {
 
     // Handle country validation separately
     if (field === 'country') {
-      const isValid = this.isValidCountry(userResponse);
+      const isValid = await countryService.isValidCountry(userResponse);
       console.log(`Country validation for "${userResponse}": ${isValid ? 'valid' : 'invalid'}`);
       return isValid;
     }
@@ -424,9 +237,8 @@ class PredefinedService {
     
     // Special handling for country input
     if (field === 'country') {
-      const normalized = userResponse.toLowerCase().trim();
-      const isValid = this.isValidCountry(userResponse);
-      const mappedValue = this.mapCountryValue(userResponse);
+      const isValid = await countryService.isValidCountry(userResponse);
+      const mappedValue = await countryService.mapToMalaysianOrForeigner(userResponse);
       
       console.log(`Processing country for ${messageType}: "${userResponse}"`);
       console.log(`Country validation result: ${isValid ? 'valid' : 'invalid'}`);

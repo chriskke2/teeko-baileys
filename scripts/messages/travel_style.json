@@ -1,0 +1,25 @@
+{
+  "type": "onboarding",
+  "field": "travel_style",
+  "sequence": 4,
+  "message": "What's your travel personality? (Pick one that fits your vibe)",
+  "validation": [
+    {
+      "type": "invalid_selection",
+      "error_message": "Please choose a travel style that best fits you."
+    }
+  ],
+  "options": [
+    { "value": "chill", "display": "Chill & Recharge 😌", "aliases": ["chill", "relax", "recharge", "1"], "mapping": "chill" },
+    { "value": "see_do", "display": "See & Do Everything 💨", "aliases": ["see", "do", "everything", "2"], "mapping": "see_do" },
+    { "value": "hidden_gems", "display": "Discover Hidden Gems 🧭", "aliases": ["hidden", "gems", "discover", "3"], "mapping": "hidden_gems" },
+    { "value": "adventure", "display": "Go On Adventures 🧗", "aliases": ["adventure", "adventures", "4"], "mapping": "adventure" },
+    { "value": "photos", "display": "Snap Cool Photos 📸", "aliases": ["photo", "photos", "snap", "5"], "mapping": "photos" },
+    { "value": "culture", "display": "Explore Malaysian Culture 🇲🇾", "aliases": ["culture", "malaysian", "explore", "6"], "mapping": "culture" }
+  ],
+  "metadata": {
+    "user_field": "travel_style",
+    "interactive_type": "list",
+    "response_processor": "direct_mapping"
+  }
+} 
