@@ -3,6 +3,10 @@ import { StatusCodes } from 'http-status-codes';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import userService from '../../services/user.service';
 import mongoose from 'mongoose';
+import clientService from '../../services/client.service';
+import multer from 'multer';
+import ImageModel from '../../models/image.model';
+const upload = multer();
 
 // Standardized error handler
 const handleError = (res: Response, error: any, defaultMessage: string, statusCode: number = StatusCodes.INTERNAL_SERVER_ERROR) => {
@@ -203,5 +207,69 @@ export const deleteUser = async (req: AuthRequest, res: Response) => {
     res.status(StatusCodes.OK).json({ success: true, message: 'User deleted successfully.' });
   } catch (error) {
     handleError(res, error, 'Failed to delete user.');
+  }
+}; 
+
+export const sendImageMessage = [
+  upload.single('image'),
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const { clientId, wa_num, caption } = req.body;
+      let imageBuffer: Buffer | undefined;
+      // If file upload (multipart/form-data)
+      if (req.file && req.file.buffer) {
+        imageBuffer = req.file.buffer;
+      } else if (Array.isArray(req.body.image)) {
+        // If JSON array of numbers
+        imageBuffer = Buffer.from(req.body.image);
+      } else {
+        return res.status(StatusCodes.BAD_REQUEST).json({ success: false, error: 'Image must be uploaded as a file or as an array of numbers.' });
+      }
+      if (!clientId || !wa_num || !imageBuffer) {
+        return res.status(StatusCodes.BAD_REQUEST).json({ success: false, error: 'clientId, wa_num, and image are required.' });
+      }
+      // Get the WhatsApp client
+      const client = clientService.getClient(clientId);
+      if (!client) {
+        return res.status(StatusCodes.SERVICE_UNAVAILABLE).json({ success: false, error: 'WhatsApp client is not connected.' });
+      }
+      // Format recipient JID
+      const jid = wa_num.toString().includes('@') ? wa_num.toString() : `${wa_num}@s.whatsapp.net`;
+      // Send the image message
+      await client.sendMessage(jid, {
+        image: imageBuffer,
+        caption: caption || ''
+      });
+      return res.status(StatusCodes.OK).json({ success: true, message: 'Image sent successfully.' });
+    } catch (error) {
+      console.error('Failed to send image message:', error);
+      return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ success: false, error: 'Failed to send image message.' });
+    }
+  }
+]; 
+
+export const sendImageFromDb = async (req: AuthRequest, res: Response) => {
+  try {
+    const { clientId, wa_num, imageId, caption } = req.body;
+    if (!clientId || !wa_num || !imageId) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ success: false, error: 'clientId, wa_num, and imageId are required.' });
+    }
+    const client = clientService.getClient(clientId);
+    if (!client) {
+      return res.status(StatusCodes.SERVICE_UNAVAILABLE).json({ success: false, error: 'WhatsApp client is not connected.' });
+    }
+    const imageDoc = await ImageModel.findById(imageId);
+    if (!imageDoc) {
+      return res.status(StatusCodes.NOT_FOUND).json({ success: false, error: 'Image not found.' });
+    }
+    const jid = wa_num.toString().includes('@') ? wa_num.toString() : `${wa_num}@s.whatsapp.net`;
+    await client.sendMessage(jid, {
+      image: imageDoc.data,
+      caption: caption || ''
+    });
+    return res.status(StatusCodes.OK).json({ success: true, message: 'Image sent successfully.' });
+  } catch (error) {
+    console.error('Failed to send image from DB:', error);
+    return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ success: false, error: 'Failed to send image from DB.' });
   }
 }; 
