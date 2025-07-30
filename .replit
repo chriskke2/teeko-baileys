@@ -1,0 +1,26 @@
+modules = ["nodejs-24"]
+
+[workflows]
+runButton = "run baileys"
+
+[[workflows.workflow]]
+name = "run baileys"
+mode = "sequential"
+author = 45596788
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run build"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run start:local"
+
+[[ports]]
+localPort = 3001
+externalPort = 80
+
+[deployment]
+build = ["sh", "-c", "npm run build"]
+run = ["sh", "-c", "npm run start:local"]
+deploymentTarget = "gce"
