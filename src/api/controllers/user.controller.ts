@@ -272,4 +272,30 @@ export const sendImageFromDb = async (req: AuthRequest, res: Response) => {
     console.error('Failed to send image from DB:', error);
     return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ success: false, error: 'Failed to send image from DB.' });
   }
+};
+
+export const sendImageByName = async (req: AuthRequest, res: Response) => {
+  try {
+    const { clientId, wa_num, imageName, caption } = req.body;
+    if (!clientId || !wa_num || !imageName) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ success: false, error: 'clientId, wa_num, and imageName are required.' });
+    }
+    const client = clientService.getClient(clientId);
+    if (!client) {
+      return res.status(StatusCodes.SERVICE_UNAVAILABLE).json({ success: false, error: 'WhatsApp client is not connected.' });
+    }
+    const imageDoc = await ImageModel.findOne({ name: imageName });
+    if (!imageDoc) {
+      return res.status(StatusCodes.NOT_FOUND).json({ success: false, error: `Image with name '${imageName}' not found.` });
+    }
+    const jid = wa_num.toString().includes('@') ? wa_num.toString() : `${wa_num}@s.whatsapp.net`;
+    await client.sendMessage(jid, {
+      image: imageDoc.data,
+      caption: caption || ''
+    });
+    return res.status(StatusCodes.OK).json({ success: true, message: 'Image sent successfully.' });
+  } catch (error) {
+    console.error('Failed to send image by name:', error);
+    return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ success: false, error: 'Failed to send image by name.' });
+  }
 }; 

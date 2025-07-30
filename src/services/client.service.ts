@@ -82,6 +82,7 @@ class ClientService {
     private qrRetryCount = new Map<string, number>();
     private disconnectedClients = new Set<string>();
     private reconnectAttempts = new Map<string, number>();
+    private manualDisconnections = new Set<string>(); // Track manual disconnections
 
     public static getInstance(): ClientService {
         if (!ClientService.instance) {
@@ -98,6 +99,8 @@ class ClientService {
         const sock = this.clients.get(clientId);
         if (sock) {
             console.log(`Disconnecting client ${clientId}...`);
+            // Mark as manual disconnection
+            this.manualDisconnections.add(clientId);
             await sock.end(new Boom('Manual Disconnect', { statusCode: DisconnectReason.connectionClosed }));
             this.clients.delete(clientId);
             await ClientData.findByIdAndUpdate(clientId, { status: 'DISCONNECTED' });
@@ -108,6 +111,8 @@ class ClientService {
         const sock = this.clients.get(clientId);
         if (sock) {
             console.log(`Logging out client ${clientId}...`);
+            // Mark as manual disconnection
+            this.manualDisconnections.add(clientId);
             await sock.logout();
             this.clients.delete(clientId);
         }
@@ -184,6 +189,7 @@ class ClientService {
                 if (connection === 'close') {
                     const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
                     const errorCode = (lastDisconnect?.error as any)?.output?.payload?.['stream:error']?.['@attrs']?.code;
+                    const isManualDisconnect = this.manualDisconnections.has(clientId);
                     
                     // Handle specific WhatsApp stream errors
                     if (errorCode === '515') {
@@ -210,9 +216,22 @@ class ClientService {
                         await ClientData.findByIdAndUpdate(clientId, { status: 'DISCONNECTED' });
                         this.disconnectedClients.add(clientId);
                     } else if (statusCode === DisconnectReason.connectionClosed) {
-                        console.log(`Connection closed manually for ${clientId}. Not reconnecting.`);
-                        io.to(clientId).emit('statusChange', { status: 'DISCONNECTED' });
-                        this.clients.delete(clientId);
+                        if (isManualDisconnect) {
+                            console.log(`Connection closed manually for ${clientId}. Not reconnecting.`);
+                            io.to(clientId).emit('statusChange', { status: 'DISCONNECTED' });
+                            this.clients.delete(clientId);
+                            // Clean up manual disconnection tracking
+                            this.manualDisconnections.delete(clientId);
+                        } else {
+                            console.log(`Connection closed unexpectedly for ${clientId}. Starting reconnection...`);
+                            io.to(clientId).emit('statusChange', { 
+                                status: 'RECONNECTING', 
+                                message: 'Connection lost. Attempting to reconnect...' 
+                            });
+                            this.clients.delete(clientId);
+                            // Start reconnection with backoff
+                            this.reconnectWithBackoff(clientId, io);
+                        }
                     } else {
                         console.log(`Connection closed for client ${clientId} with status code: ${statusCode}. Starting reconnection...`);
                         // Remove the client from the map
@@ -228,6 +247,7 @@ class ClientService {
                     this.qrRetryCount.delete(clientId);
                     this.reconnectAttempts.delete(clientId);
                     this.disconnectedClients.delete(clientId);
+                    this.manualDisconnections.delete(clientId); // Clean up manual disconnection tracking
 
                     const { id, name } = sock.user;
                     const phoneNumber = id.split(':')[0];
@@ -342,6 +362,12 @@ class ClientService {
     }
 
     private async reconnectWithBackoff(clientId: string, io: any): Promise<void> {
+        // Check if this is a manual disconnection
+        if (this.manualDisconnections.has(clientId)) {
+            console.log(`Client ${clientId} was manually disconnected. Not attempting reconnection.`);
+            return;
+        }
+
         const attempts = this.reconnectAttempts.get(clientId) || 0;
         this.reconnectAttempts.set(clientId, attempts + 1);
         
@@ -350,20 +376,25 @@ class ClientService {
         
         io.to(clientId).emit('statusChange', { 
             status: 'RECONNECTING', 
-            message: `Reconnecting in ${delaySeconds} seconds...` 
+            message: `Reconnecting in ${delaySeconds} seconds... (attempt ${attempts + 1})` 
         });
         
         console.log(`Will attempt to reconnect client ${clientId} in ${delaySeconds} seconds (attempt ${attempts + 1})`);
         
-        // Max 10 reconnect attempts
-        if (attempts >= 10) {
-            console.log(`Maximum reconnection attempts reached for client ${clientId}.`);
+        // Max 20 reconnect attempts (increased for better persistence)
+        if (attempts >= 20) {
+            console.log(`Maximum reconnection attempts reached for client ${clientId}. Will retry after 1 hour.`);
             io.to(clientId).emit('statusChange', { 
                 status: 'DISCONNECTED', 
-                message: 'Maximum reconnection attempts reached. Please reconnect manually.' 
+                message: 'Maximum reconnection attempts reached. Will retry after 1 hour.' 
             });
             await ClientData.findByIdAndUpdate(clientId, { status: 'DISCONNECTED' });
-            this.reconnectAttempts.delete(clientId);
+            
+            // Reset attempts and try again after 1 hour
+            setTimeout(() => {
+                this.reconnectAttempts.delete(clientId);
+                this.reconnectWithBackoff(clientId, io);
+            }, 3600000); // 1 hour
             return;
         }
         
@@ -381,6 +412,108 @@ class ClientService {
                 this.reconnectWithBackoff(clientId, io);
             }
         }, delaySeconds * 1000);
+    }
+
+    // Method to check if a client should be reconnected
+    public shouldReconnect(clientId: string): boolean {
+        return !this.manualDisconnections.has(clientId) && !this.disconnectedClients.has(clientId);
+    }
+
+    // Method to force reconnection for a client
+    public async forceReconnect(clientId: string): Promise<void> {
+        console.log(`Force reconnecting client ${clientId}...`);
+        
+        // Clear any existing reconnection attempts
+        this.reconnectAttempts.delete(clientId);
+        
+        // Disconnect existing client if it exists
+        const existingClient = this.clients.get(clientId);
+        if (existingClient) {
+            try {
+                await existingClient.end(new Boom('Force Reconnect', { statusCode: DisconnectReason.connectionClosed }));
+            } catch (error) {
+                console.error(`Error ending existing client ${clientId}:`, error);
+            }
+            this.clients.delete(clientId);
+        }
+        
+        // Remove from manual disconnections to allow reconnection
+        this.manualDisconnections.delete(clientId);
+        
+        // Initialize new client
+        const io = socketService.getIO();
+        await this.initializeClient(clientId);
+        io.to(clientId).emit('statusChange', { status: 'INITIALIZING' });
+    }
+
+    // Method to get connection status
+    public getConnectionStatus(clientId: string): {
+        isConnected: boolean;
+        isManualDisconnect: boolean;
+        reconnectAttempts: number;
+        status: string;
+    } {
+        const client = this.clients.get(clientId);
+        return {
+            isConnected: !!client,
+            isManualDisconnect: this.manualDisconnections.has(clientId),
+            reconnectAttempts: this.reconnectAttempts.get(clientId) || 0,
+            status: client ? 'CONNECTED' : 'DISCONNECTED'
+        };
+    }
+
+    // Method to perform health check on all clients
+    public async performHealthCheck(): Promise<void> {
+        console.log('Performing health check on all clients...');
+        
+        for (const [clientId, client] of this.clients.entries()) {
+            try {
+                // Check if client is still responsive
+                if (client && client.user) {
+                    console.log(`Client ${clientId} is healthy`);
+                } else {
+                    console.log(`Client ${clientId} appears unhealthy, attempting reconnection...`);
+                    await this.forceReconnect(clientId);
+                }
+            } catch (error) {
+                console.error(`Health check failed for client ${clientId}:`, error);
+                // Attempt reconnection for failed health checks
+                if (this.shouldReconnect(clientId)) {
+                    await this.forceReconnect(clientId);
+                }
+            }
+        }
+    }
+
+    // Method to start periodic health checks
+    public startHealthChecks(intervalMinutes: number = 5): void {
+        console.log(`Starting health checks every ${intervalMinutes} minutes...`);
+        setInterval(() => {
+            this.performHealthCheck();
+        }, intervalMinutes * 60 * 1000);
+    }
+
+    // Method to gracefully shutdown all clients
+    public async shutdown(): Promise<void> {
+        console.log('Shutting down all clients...');
+        
+        for (const [clientId, client] of this.clients.entries()) {
+            try {
+                if (client) {
+                    await client.end(new Boom('Server Shutdown', { statusCode: DisconnectReason.connectionClosed }));
+                }
+            } catch (error) {
+                console.error(`Error shutting down client ${clientId}:`, error);
+            }
+        }
+        
+        this.clients.clear();
+        this.manualDisconnections.clear();
+        this.reconnectAttempts.clear();
+        this.qrRetryCount.clear();
+        this.disconnectedClients.clear();
+        
+        console.log('All clients have been shut down.');
     }
 }
 

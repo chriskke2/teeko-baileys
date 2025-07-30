@@ -19,7 +19,9 @@
     "context:import": "node scripts/import-contexts.js",
     "context:update-users": "node scripts/update-user-contexts.js",
     "context:test": "node scripts/test-context-generation.js",
-    "context:check": "node scripts/check-context-collection.js"
+    "context:check": "node scripts/check-context-collection.js",
+    "image:upload": "node scripts/upload-image.js",
+    "image:list": "node scripts/list-images.js"
   },
   "keywords": [
     "whatsapp",

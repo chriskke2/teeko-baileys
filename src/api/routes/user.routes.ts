@@ -1,5 +1,5 @@
 import express from 'express';
-import { addUser, getAllUsers, deleteUser, activateUser, sendImageMessage, sendImageFromDb } from '../controllers/user.controller';
+import { addUser, getAllUsers, deleteUser, activateUser, sendImageMessage, sendImageFromDb, sendImageByName } from '../controllers/user.controller';
 import authMiddleware from '../middlewares/auth.middleware';
 
 const router = express.Router();
@@ -18,6 +18,9 @@ router.post('/send-image', sendImageMessage);
 
 // POST /api/users/send-image-from-db
 router.post('/send-image-from-db', sendImageFromDb);
+
+// POST /api/users/send-image-by-name
+router.post('/send-image-by-name', sendImageByName);
 
 // GET /api/users/
 router.get('/', getAllUsers);

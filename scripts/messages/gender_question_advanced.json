@@ -2,7 +2,7 @@
   "type": "onboarding",
   "field": "gender",
   "sequence": 1,
-  "message": "To help me provide better recommendations, could you tell me your gender?",
+  "message": "Please select your gender:",
   "validation": [
     {
       "type": "invalid_selection",
