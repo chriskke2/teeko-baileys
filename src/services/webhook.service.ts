@@ -115,8 +115,8 @@ class WebhookService {
       
       console.log(`Webhook sent successfully. Status: ${response.status}`);
       
-      // Process the response if it hasn't been handled by the fallback
-      if (!fallbackExecuted && onResponse && response.data) {
+      // Process the response regardless of fallback execution
+      if (onResponse && response.data) {
         try {
           const message = this.extractMessageFromResponse(response.data);
           const webhookResponse: WebhookResponse = {
