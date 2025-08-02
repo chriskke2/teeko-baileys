@@ -41,6 +41,10 @@ if (!process.env.WEBHOOK_URL) {
     console.warn('Missing WEBHOOK_URL environment variable. Webhook functionality will not work.');
 }
 
+if (!process.env.KB_WEBHOOK_URL) {
+    console.warn('Missing KB_WEBHOOK_URL environment variable. Knowledge base webhook functionality will not work.');
+}
+
 const config = {
   port: process.env.PORT || 3000,
   mongodb_uri: process.env.MONGODB_URI,
@@ -52,6 +56,7 @@ const config = {
   mongodb_countries_collection: process.env.MONGODB_COUNTRIES_COLLECTION || 'countries',
   mongodb_image_collection: process.env.MONGODB_IMAGE_COLLECTION || 'images',
   webhook_url: process.env.WEBHOOK_URL,
+  kb_webhook_url: process.env.KB_WEBHOOK_URL,
   jwt_key: process.env.JWTKEY,
   activation_msg: process.env.ACTIVATION_MSG || 'Thank you for subscribing to our service! Your activation code is: *{code}*\n\nPlease use this code to activate your subscription.',
   user_exist_false_msg: process.env.USER_EXIST_FALSE_MSG || 'Sorry, your number is not registered with our service. Please subscribe first.',
