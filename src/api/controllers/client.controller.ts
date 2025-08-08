@@ -43,7 +43,25 @@ export const connectClient = async (req: AuthRequest, res: Response) => {
     if (!clientData) {
       return res.status(StatusCodes.NOT_FOUND).json({ success: false, error: 'Client not found.' });
     }
-    
+
+    // Check if client is already connected
+    const existingClient = clientService.getClient(clientId);
+    if (existingClient) {
+      // Get the current connection status
+      const connectionStatus = clientService.getConnectionStatus(clientId);
+
+      return res.status(StatusCodes.CONFLICT).json({
+        success: false,
+        error: 'Client is already connected. Use disconnect first if you want to reconnect.',
+        data: {
+          currentStatus: connectionStatus.status,
+          isConnected: connectionStatus.isConnected,
+          isAuthenticated: connectionStatus.isAuthenticated,
+          dbStatus: clientData.status
+        }
+      });
+    }
+
     await clientService.initializeClient(clientId);
     res.status(StatusCodes.OK).json({ success: true, message: 'Client connection initiated. Listen for QR code and status updates.' });
   } catch (error) {
@@ -85,7 +103,17 @@ export const getAllClients = async (req: AuthRequest, res: Response) => {
   console.log("GET /api/client/");
   try {
     const clients = await ClientData.find().select('-session');
-    res.status(StatusCodes.OK).json({ success: true, clients });
+
+    // Add real-time status for each client
+    const clientsWithStatus = clients.map(client => {
+      const connectionStatus = clientService.getConnectionStatus(client._id.toString());
+      return {
+        ...client.toObject(),
+        realTimeStatus: connectionStatus
+      };
+    });
+
+    res.status(StatusCodes.OK).json({ success: true, clients: clientsWithStatus });
   } catch (error) {
     handleError(res, error, 'Failed to retrieve clients.');
   }
@@ -115,24 +143,46 @@ export const deleteClient = async (req: AuthRequest, res: Response) => {
   }
 };
 
+export const syncClientStatuses = async (req: AuthRequest, res: Response) => {
+  console.log("POST /api/client/sync-statuses");
+  try {
+    await clientService.syncAllClientStatuses();
+    res.status(StatusCodes.OK).json({
+      success: true,
+      message: 'Client statuses synchronized successfully.'
+    });
+  } catch (error) {
+    handleError(res, error, 'Failed to sync client statuses.');
+  }
+};
+
 export const getClientById = async (req: AuthRequest, res: Response) => {
   console.log("GET /api/client/:clientId");
   try {
     const { clientId } = req.params;
-    
+
     // Validate if the ID is a valid MongoDB ObjectId
     if (!mongoose.Types.ObjectId.isValid(clientId)) {
       return res.status(StatusCodes.BAD_REQUEST).json({ success: false, error: 'Invalid client ID format.' });
     }
-    
+
     const client = await ClientData.findById(clientId).select('-session');
 
     if (!client) {
       return res.status(StatusCodes.NOT_FOUND).json({ success: false, error: 'Client not found.' });
     }
 
-    res.status(StatusCodes.OK).json({ success: true, client });
+    // Get real-time connection status
+    const connectionStatus = clientService.getConnectionStatus(clientId);
+
+    res.status(StatusCodes.OK).json({
+      success: true,
+      client: {
+        ...client.toObject(),
+        realTimeStatus: connectionStatus
+      }
+    });
   } catch (error) {
     handleError(res, error, 'Failed to retrieve client.');
   }
-}; 
+};

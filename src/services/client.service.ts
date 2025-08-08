@@ -18,6 +18,7 @@ import qrcode from 'qrcode';
 import ClientData from '../models/client.model';
 import socketService from './socket.service';
 import userService from './user.service';
+import logger from '../utils/logger.util';
 
 const useMongoDBAuthState = async (clientId: string): Promise<{ state: { creds: AuthenticationCreds, keys: SignalKeyStore }, saveCreds: () => Promise<void> }> => {
     const client = await ClientData.findById(clientId).lean();
@@ -121,23 +122,26 @@ class ClientService {
     }
 
     public async initializeClient(clientId: string) {
-        console.log(`Initializing WhatsApp client for ID: ${clientId}`);
+        logger.info(`Initializing WhatsApp client for ID: ${clientId}`);
 
         const msgRetryCounterCache = new NodeCache();
-        const logger = pino({ level: 'warn' });
+        const pinoLogger = pino({ level: 'silent' }); // Changed from 'warn' to 'silent' to reduce logs
         
         const { state, saveCreds } = await useMongoDBAuthState(clientId);
 
         const { version, isLatest } = await fetchLatestBaileysVersion();
-        console.log(`using WA v${version.join('.')}, isLatest: ${isLatest}`);
+        // Only log version if it's not the latest
+        if (!isLatest) {
+            console.log(`Using WA v${version.join('.')}, isLatest: ${isLatest}`);
+        }
 
         const sock = makeWASocket({
             version,
-            logger,
+            logger: pinoLogger,
             auth: state,
             msgRetryCounterCache,
             generateHighQualityLinkPreview: true,
-            async getMessage(key: WAMessageKey): Promise<WAMessageContent | undefined> {
+            async getMessage(_key: WAMessageKey): Promise<WAMessageContent | undefined> {
                 return proto.Message.fromObject({});
             }
         });
@@ -223,17 +227,17 @@ class ClientService {
                             // Clean up manual disconnection tracking
                             this.manualDisconnections.delete(clientId);
                         } else {
-                            console.log(`Connection closed unexpectedly for ${clientId}. Starting reconnection...`);
-                            io.to(clientId).emit('statusChange', { 
-                                status: 'RECONNECTING', 
-                                message: 'Connection lost. Attempting to reconnect...' 
+                            console.log(`Client ${clientId} disconnected unexpectedly, reconnecting...`);
+                            io.to(clientId).emit('statusChange', {
+                                status: 'RECONNECTING',
+                                message: 'Connection lost. Attempting to reconnect...'
                             });
                             this.clients.delete(clientId);
                             // Start reconnection with backoff
                             this.reconnectWithBackoff(clientId, io);
                         }
                     } else {
-                        console.log(`Connection closed for client ${clientId} with status code: ${statusCode}. Starting reconnection...`);
+                        console.log(`Client ${clientId} disconnected (code: ${statusCode}), reconnecting...`);
                         // Remove the client from the map
                         this.clients.delete(clientId);
                         // Start reconnection with backoff
@@ -242,7 +246,7 @@ class ClientService {
                 }
 
                 if (connection === 'open') {
-                    console.log(`Client ${clientId} connected!`);
+                    logger.success(`Client ${clientId} authenticated successfully`);
                     io.to(clientId).emit('statusChange', { status: 'AUTHENTICATED' });
                     this.qrRetryCount.delete(clientId);
                     this.reconnectAttempts.delete(clientId);
@@ -379,17 +383,20 @@ class ClientService {
             message: `Reconnecting in ${delaySeconds} seconds... (attempt ${attempts + 1})` 
         });
         
-        console.log(`Will attempt to reconnect client ${clientId} in ${delaySeconds} seconds (attempt ${attempts + 1})`);
-        
+        // Only log every 5th attempt to reduce spam
+        if (attempts % 5 === 0 || attempts === 1) {
+            console.log(`Reconnecting client ${clientId} in ${delaySeconds}s (attempt ${attempts + 1})`);
+        }
+
         // Max 20 reconnect attempts (increased for better persistence)
         if (attempts >= 20) {
-            console.log(`Maximum reconnection attempts reached for client ${clientId}. Will retry after 1 hour.`);
-            io.to(clientId).emit('statusChange', { 
-                status: 'DISCONNECTED', 
-                message: 'Maximum reconnection attempts reached. Will retry after 1 hour.' 
+            console.log(`Max reconnection attempts reached for client ${clientId}. Will retry in 1 hour.`);
+            io.to(clientId).emit('statusChange', {
+                status: 'DISCONNECTED',
+                message: 'Maximum reconnection attempts reached. Will retry after 1 hour.'
             });
             await ClientData.findByIdAndUpdate(clientId, { status: 'DISCONNECTED' });
-            
+
             // Reset attempts and try again after 1 hour
             setTimeout(() => {
                 this.reconnectAttempts.delete(clientId);
@@ -403,7 +410,10 @@ class ClientService {
         
         setTimeout(async () => {
             try {
-                console.log(`Attempting to reconnect client ${clientId}...`);
+                // Only log on first few attempts
+                if ((this.reconnectAttempts.get(clientId) || 0) <= 3) {
+                    console.log(`Reconnecting client ${clientId}...`);
+                }
                 await this.initializeClient(clientId);
                 io.to(clientId).emit('statusChange', { status: 'INITIALIZING' });
             } catch (error) {
@@ -449,29 +459,46 @@ class ClientService {
     // Method to get connection status
     public getConnectionStatus(clientId: string): {
         isConnected: boolean;
+        isAuthenticated: boolean;
         isManualDisconnect: boolean;
         reconnectAttempts: number;
         status: string;
     } {
         const client = this.clients.get(clientId);
+        const isConnected = !!client;
+        const isAuthenticated = !!(client && client.user);
+
+        let status = 'DISCONNECTED';
+        if (isAuthenticated) {
+            status = 'AUTHENTICATED';
+        } else if (isConnected) {
+            status = 'INITIALIZING';
+        }
+
         return {
-            isConnected: !!client,
+            isConnected,
+            isAuthenticated,
             isManualDisconnect: this.manualDisconnections.has(clientId),
             reconnectAttempts: this.reconnectAttempts.get(clientId) || 0,
-            status: client ? 'CONNECTED' : 'DISCONNECTED'
+            status
         };
     }
 
     // Method to perform health check on all clients
     public async performHealthCheck(): Promise<void> {
-        console.log('Performing health check on all clients...');
-        
+        // Only log if there are issues or changes
+        let healthyCount = 0;
+        let unhealthyCount = 0;
+
         for (const [clientId, client] of this.clients.entries()) {
             try {
-                // Check if client is still responsive
+                // Check if client is still responsive and authenticated
                 if (client && client.user) {
-                    console.log(`Client ${clientId} is healthy`);
+                    healthyCount++;
+                    // Ensure database status reflects the actual connection state
+                    await this.syncClientStatus(clientId, 'AUTHENTICATED');
                 } else {
+                    unhealthyCount++;
                     console.log(`Client ${clientId} appears unhealthy, attempting reconnection...`);
                     await this.forceReconnect(clientId);
                 }
@@ -483,11 +510,79 @@ class ClientService {
                 }
             }
         }
+
+        // Only log summary if there are clients or issues
+        if (healthyCount > 0 || unhealthyCount > 0) {
+            console.log(`Health check completed: ${healthyCount} healthy, ${unhealthyCount} unhealthy clients`);
+        }
+
+        // Also check for clients in database that are marked as connected but not in memory
+        await this.syncDisconnectedClients();
+    }
+
+    // Method to sync client status in database with actual connection state
+    private async syncClientStatus(clientId: string, status: string): Promise<void> {
+        try {
+            const currentData = await ClientData.findById(clientId);
+            if (currentData && currentData.status !== status) {
+                console.log(`Syncing status for client ${clientId}: ${currentData.status} -> ${status}`);
+                await ClientData.findByIdAndUpdate(clientId, { status });
+            }
+        } catch (error) {
+            console.error(`Failed to sync status for client ${clientId}:`, error);
+        }
+    }
+
+    // Method to check for clients marked as connected in DB but not in memory
+    private async syncDisconnectedClients(): Promise<void> {
+        try {
+            // Find clients marked as AUTHENTICATED or INITIALIZING in database
+            const dbClients = await ClientData.find({
+                status: { $in: ['AUTHENTICATED', 'INITIALIZING', 'RECONNECTING'] }
+            });
+
+            for (const dbClient of dbClients) {
+                const clientId = dbClient._id.toString();
+                const memoryClient = this.clients.get(clientId);
+
+                // If client is marked as connected in DB but not in memory, mark as disconnected
+                if (!memoryClient) {
+                    console.log(`Client ${clientId} marked as ${dbClient.status} in DB but not in memory. Setting to DISCONNECTED.`);
+                    await ClientData.findByIdAndUpdate(clientId, { status: 'DISCONNECTED' });
+                }
+            }
+        } catch (error) {
+            console.error('Failed to sync disconnected clients:', error);
+        }
+    }
+
+    // Method to manually sync all client statuses
+    public async syncAllClientStatuses(): Promise<void> {
+        console.log('Manually syncing all client statuses...');
+
+        // Sync connected clients
+        for (const [clientId, client] of this.clients.entries()) {
+            try {
+                if (client && client.user) {
+                    await this.syncClientStatus(clientId, 'AUTHENTICATED');
+                } else {
+                    await this.syncClientStatus(clientId, 'INITIALIZING');
+                }
+            } catch (error) {
+                console.error(`Failed to sync status for client ${clientId}:`, error);
+            }
+        }
+
+        // Sync disconnected clients
+        await this.syncDisconnectedClients();
+
+        console.log('Client status synchronization completed.');
     }
 
     // Method to start periodic health checks
     public startHealthChecks(intervalMinutes: number = 5): void {
-        console.log(`Starting health checks every ${intervalMinutes} minutes...`);
+        // Only log once at startup
+        console.log(`Health checks enabled (${intervalMinutes}min intervals)`);
         setInterval(() => {
             this.performHealthCheck();
         }, intervalMinutes * 60 * 1000);

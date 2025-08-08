@@ -15,8 +15,10 @@ const startServer = async () => {
 
   // Set all clients to DISCONNECTED on server restart
   try {
-    await ClientData.updateMany({}, { $set: { status: 'DISCONNECTED' } });
-    console.log('All clients have been set to DISCONNECTED.');
+    const result = await ClientData.updateMany({}, { $set: { status: 'DISCONNECTED' } });
+    if (result.modifiedCount > 0) {
+      console.log(`Reset ${result.modifiedCount} client(s) to DISCONNECTED`);
+    }
   } catch (error) {
     console.error('Failed to update client statuses:', error);
   }

@@ -3,7 +3,10 @@ import path from 'path';
 const env = process.env.NODE_ENV || 'local';
 const envPath = path.resolve(__dirname, `../../.env.${env}`);
 
-console.log(`Loading environment variables from: ${envPath}`);
+// Only log in development mode
+if (env === 'development' || env === 'local') {
+  console.log(`Loading environment variables from: ${envPath}`);
+}
 require('dotenv').config({ path: envPath });
 
 if (!process.env.MONGODB_URI) {

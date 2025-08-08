@@ -4,6 +4,7 @@ import clientRoutes from './api/routes/client.routes';
 import userRoutes from './api/routes/user.routes';
 import packageRoutes from './api/routes/package.routes';
 import kbRoutes from './api/routes/kb.routes';
+import messageRoutes from './api/routes/message.routes';
 
 const app = express();
 
@@ -21,5 +22,6 @@ app.use('/api/client', clientRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/packages', packageRoutes);
 app.use('/api/kb', kbRoutes);
+app.use('/api/message', messageRoutes);
 
 export { app }; 

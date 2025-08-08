@@ -1,5 +1,5 @@
 import express from 'express';
-import { createClient, connectClient, disconnectClient, logoutClient, getAllClients, deleteClient, getClientById } from '../controllers/client.controller';
+import { createClient, connectClient, disconnectClient, logoutClient, getAllClients, deleteClient, getClientById, syncClientStatuses } from '../controllers/client.controller';
 import authMiddleware from '../middlewares/auth.middleware';
 
 const router = express.Router();
@@ -18,6 +18,9 @@ router.post('/disconnect', disconnectClient);
 
 // POST /api/client/logout
 router.post('/logout', logoutClient);
+
+// POST /api/client/sync-statuses
+router.post('/sync-statuses', syncClientStatuses);
 
 // GET /api/client/
 router.get('/', getAllClients);
