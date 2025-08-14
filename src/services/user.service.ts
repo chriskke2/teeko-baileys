@@ -4,8 +4,10 @@ import onboardingService from './onboarding.service';
 import activationService from './activation.service';
 import messagingService from './messaging.service';
 import webhookService from './webhook.service';
+import predefinedService from './predefined.service';
 import { UserState } from './activation.service';
 import mongoose from 'mongoose';
+import config from '../config';
 
 // Forward declaration to avoid circular dependency
 let clientService: any;
@@ -126,8 +128,12 @@ class UserService {
 
       // Set subscription start date to now
       const subscriptionStart = new Date();
-      
-      // Get package information for package name
+
+      // Get package information for package name (only if package_id exists)
+      if (!user.package_id) {
+        throw new Error('User does not have a package ID assigned');
+      }
+
       const packageInfo = await packageService.getPackageById(user.package_id);
       if (!packageInfo) {
         throw new Error(`Package with ID '${user.package_id}' not found`);
@@ -298,11 +304,26 @@ class UserService {
       const senderName = message.pushName || 'User';
       
       // Find the user in the database
-      const user = await UserData.findOne({ wa_num: waNumber });
+      let user = await UserData.findOne({ wa_num: waNumber });
       if (!user) {
-        // User not found - handle with not registered message
-        await activationService.handleUnregisteredUser(clientId, remoteJid);
-        return;
+        // Check if subscription is required
+        if (!config.subscribe_required) {
+          // Subscription not required - create user automatically and start onboarding
+          console.log(`SUBSCRIBE=false: Auto-creating user ${waNumber} and starting onboarding`);
+          user = await this.createUserForDirectOnboarding(waNumber, senderName);
+          if (!user) {
+            console.error('Failed to create user for direct onboarding');
+            return;
+          }
+
+          // Send welcome message and start onboarding if needed
+          await this.handleNewUserWelcome(user, clientId, remoteJid);
+          return; // Don't process the original message further
+        } else {
+          // User not found and subscription is required - handle with not registered message
+          await activationService.handleUnregisteredUser(clientId, remoteJid);
+          return;
+        }
       }
 
       // Update first_name if not set or different from sender name
@@ -478,6 +499,104 @@ class UserService {
         clientId,
         recipient,
         "Sorry, we encountered an error processing your message. Please try again later."
+      );
+    }
+  }
+
+  /**
+   * Create a user for direct onboarding when subscription is not required
+   * @param waNumber WhatsApp number
+   * @param senderName Sender's name
+   * @returns Created user object or null if failed
+   */
+  private async createUserForDirectOnboarding(waNumber: number, senderName: string): Promise<any | null> {
+    try {
+      // Extract first name from sender name
+      const firstName = senderName ? senderName.split(' ')[0] : '';
+
+      // Check if onboarding steps exist
+      const onboardingSteps = await predefinedService.getAllByType('onboarding');
+      const hasOnboardingSteps = onboardingSteps && onboardingSteps.length > 0;
+
+      // Get the first step if onboarding exists
+      let firstStep = null;
+      if (hasOnboardingSteps) {
+        const sortedSteps = onboardingSteps.sort((a: any, b: any) => {
+          const seqA = typeof a.sequence === 'number' ? a.sequence : 999;
+          const seqB = typeof b.sequence === 'number' ? b.sequence : 999;
+          return seqA - seqB;
+        });
+        firstStep = sortedSteps[0]?.field || null;
+      }
+
+      // Create user with minimal data - no package, no subscription dates
+      const newUser = new UserData({
+        wa_num: waNumber,
+        first_name: firstName,
+        status: hasOnboardingSteps ? UserState.ONBOARDING : UserState.ACTIVE,
+        current_step: hasOnboardingSteps ? firstStep : null,
+        // Set default quotas for users without subscription
+        text_quota: 1000, // Default text quota
+        aud_quota: 100,   // Default audio quota
+        img_quota: 100,   // Default image quota
+        // No subscription dates since subscription is not required
+        subscription_start: null,
+        subscription_end: null,
+        package_id: null,
+        code: null
+      });
+
+      const savedUser = await newUser.save();
+      console.log(`Created user ${waNumber} for direct onboarding with status: ${savedUser.status}`);
+
+      return savedUser;
+    } catch (error) {
+      console.error('Error creating user for direct onboarding:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Handle welcome message and onboarding for newly created users
+   * @param user The user object
+   * @param clientId WhatsApp client ID
+   * @param recipient Recipient JID
+   */
+  private async handleNewUserWelcome(user: any, clientId: string, recipient: string): Promise<void> {
+    try {
+      const firstName = user.first_name || 'there';
+
+      if (user.status === UserState.ONBOARDING && user.current_step) {
+        // Send welcome message and start onboarding
+        await messagingService.sendRawTextMessage(
+          clientId,
+          recipient,
+          `Hi ${firstName}. I am Teeko! Let's get you set up with a few quick questions. It only takes 1 minute!`
+        );
+
+        // Send the first onboarding question
+        const message = await predefinedService.getMessage('onboarding', user.current_step);
+        const hasOptions = message && message.options && message.options.length > 0;
+        if (hasOptions) {
+          await messagingService.sendOptionsMessage(user.current_step, 'onboarding', clientId, recipient);
+        } else {
+          await messagingService.sendMessage(`onboarding/${user.current_step}`, clientId, recipient);
+        }
+      } else {
+        // No onboarding needed, user is active
+        await messagingService.sendRawTextMessage(
+          clientId,
+          recipient,
+          `Hi ${firstName}! Welcome to our chatbot. How can I help you today?`
+        );
+      }
+    } catch (error) {
+      console.error('Error handling new user welcome:', error);
+      // Send a simple welcome message as fallback
+      await messagingService.sendRawTextMessage(
+        clientId,
+        recipient,
+        "Welcome! How can I help you today?"
       );
     }
   }

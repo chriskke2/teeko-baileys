@@ -14,8 +14,8 @@ const segmentationSchema = new mongoose.Schema({
 const userSchema = new mongoose.Schema(
   {
     wa_num: { type: Number, required: true, unique: true },
-    package_id: { type: String, required: true },
-    code: { type: String, required: true, length: 6 },
+    package_id: { type: String, required: function() { return config.subscribe_required; } },
+    code: { type: String, required: function() { return config.subscribe_required; }, length: 6 },
     status: { type: String, required: true, enum: ['PENDING_ACTIVATION', 'ONBOARDING', 'ACTIVE', 'EXPIRED'], default: 'PENDING_ACTIVATION' },
     // Keep gender field for backward compatibility but mark as deprecated
     gender: { type: String, enum: ['male', 'female', 'not_specified'], default: 'not_specified' },
