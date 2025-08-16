@@ -276,7 +276,8 @@ class UserService {
     try {
       // Extract the WhatsApp number from remoteJid
       const remoteJid = message.key?.remoteJid;
-      if (!remoteJid || !remoteJid.includes('@s.whatsapp.net')) {
+      if (!remoteJid || (!remoteJid.includes('@s.whatsapp.net') && !remoteJid.includes('@lid'))) {
+        console.log(`[DEBUG] Skipping message - not a private message. RemoteJid: ${remoteJid}`);
         return; // Not a private message
       }
       
