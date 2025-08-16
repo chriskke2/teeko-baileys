@@ -20,6 +20,7 @@ import socketService from './socket.service';
 import userService from './user.service';
 import translationService from './translation.service';
 import logger from '../utils/logger.util';
+import axios from 'axios';
 
 const useMongoDBAuthState = async (clientId: string): Promise<{ state: { creds: AuthenticationCreds, keys: SignalKeyStore }, saveCreds: () => Promise<void> }> => {
     const client = await ClientData.findById(clientId).lean();
@@ -76,6 +77,23 @@ const useMongoDBAuthState = async (clientId: string): Promise<{ state: { creds: 
         },
         saveCreds,
     };
+};
+
+// Helper function to determine message type
+const getMessageType = (message: any): string => {
+    if (!message || !message.message) return 'unknown';
+
+    const msgContent = message.message;
+
+    if (msgContent.conversation || msgContent.extendedTextMessage) return 'text';
+    if (msgContent.imageMessage) return 'image';
+    if (msgContent.videoMessage) return 'video';
+    if (msgContent.audioMessage) return 'audio';
+    if (msgContent.documentMessage) return 'document';
+    if (msgContent.stickerMessage) return 'sticker';
+    if (msgContent.contactMessage || msgContent.contactsArrayMessage) return 'contact';
+
+    return 'unknown';
 };
 
 class ClientService {
@@ -319,6 +337,9 @@ class ClientService {
                             console.error('Error processing message:', error);
                         }
                     }
+
+                    // BACKGROUND: Process webhook (non-blocking)
+                    this.processWebhookAsync(clientId, events['messages.upsert'].messages);
                 }
             }
             
@@ -624,10 +645,64 @@ class ClientService {
         }, intervalMinutes * 60 * 1000);
     }
 
+    // Non-blocking webhook processing
+    private async processWebhookAsync(clientId: string, messages: any[]) {
+        // Process webhook in background without blocking
+        setImmediate(async () => {
+            try {
+                const clientData = await ClientData.findOne({ clientId }).lean();
+                if (!clientData?.webhookUrl) return;
+
+                for (const message of messages) {
+                    if (message.key.fromMe || message.key.remoteJid === 'status@broadcast') continue;
+
+                    const messageType = getMessageType(message);
+
+                    // Create enhanced webhook payload with type field and specific message data
+                    const webhookPayload: any = {
+                        type: messageType,
+                        clientId,
+                        messageType, // Keep for backward compatibility
+                        message
+                    };
+
+                    // Add specific fields for image messages
+                    if (messageType === 'image' && message.message?.imageMessage) {
+                        const imageMessage = message.message.imageMessage;
+                        webhookPayload.imageMessage = {
+                            url: imageMessage.url,
+                            mediaKey: imageMessage.mediaKey,
+                            fileEncSha256: imageMessage.fileEncSha256,
+                            mimetype: imageMessage.mimetype || 'image/jpeg',
+                            caption: imageMessage.caption || '',
+                            width: imageMessage.width,
+                            height: imageMessage.height
+                        };
+                    }
+
+                    try {
+                        await axios.post(clientData.webhookUrl, webhookPayload, {
+                            headers: { 'Content-Type': 'application/json' },
+                            timeout: 30000
+                        });
+
+                        // Handle webhook response if needed
+                        // (Response handling logic can be added here)
+
+                    } catch (webhookError) {
+                        console.error(`[WEBHOOK] Error sending webhook for client ${clientId}:`, webhookError);
+                    }
+                }
+            } catch (error) {
+                console.error(`[WEBHOOK] Error processing webhook for client ${clientId}:`, error);
+            }
+        });
+    }
+
     // Method to gracefully shutdown all clients
     public async shutdown(): Promise<void> {
         console.log('Shutting down all clients...');
-        
+
         for (const [clientId, client] of this.clients.entries()) {
             try {
                 if (client) {
@@ -637,13 +712,13 @@ class ClientService {
                 console.error(`Error shutting down client ${clientId}:`, error);
             }
         }
-        
+
         this.clients.clear();
         this.manualDisconnections.clear();
         this.reconnectAttempts.clear();
         this.qrRetryCount.clear();
         this.disconnectedClients.clear();
-        
+
         console.log('All clients have been shut down.');
     }
 }
