@@ -97,6 +97,17 @@ class ClientService {
         return this.clients.get(clientId);
     }
 
+    public getAllConnectedClients(): string[] {
+        const connectedClients: string[] = [];
+        for (const [clientId, client] of this.clients.entries()) {
+            // Check if client is authenticated and connected
+            if (client && client.user) {
+                connectedClients.push(clientId);
+            }
+        }
+        return connectedClients;
+    }
+
     public async disconnectClient(clientId: string): Promise<void> {
         const sock = this.clients.get(clientId);
         if (sock) {

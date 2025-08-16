@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { StatusCodes } from 'http-status-codes';
 import { AuthRequest } from '../middlewares/auth.middleware';
-import axios from 'axios';
+import mediaService from '../../services/media.service';
 
 const handleError = (res: Response, error: any, defaultMessage: string) => {
   console.error('Media Controller Error:', error);
@@ -14,173 +14,65 @@ const handleError = (res: Response, error: any, defaultMessage: string) => {
 };
 
 /**
- * Download media file from WhatsApp URL and return as binary response
- * POST /api/media/download
+ * Download and decrypt WhatsApp audio using simplified audio message data
+ * POST /api/media/download-audio
  */
-export const downloadMedia = async (req: AuthRequest, res: Response) => {
-  console.log("POST /api/media/download");
+export const downloadWhatsAppAudio = async (req: AuthRequest, res: Response) => {
   try {
-    const { url } = req.body;
+    const { url, mediaKey, fileEncSha256 } = req.body;
 
-    // Validate URL parameter
-    if (!url) {
+    // Validate required fields using media service
+    const validation = mediaService.validateAudioFields(url, mediaKey, fileEncSha256);
+    if (!validation.isValid) {
       return res.status(StatusCodes.BAD_REQUEST).json({
         success: false,
-        error: 'URL is required in request body.'
+        error: validation.error,
+        debug: validation.debug
       });
     }
 
-    // Validate URL format
-    if (typeof url !== 'string' || !url.startsWith('https://')) {
-      return res.status(StatusCodes.BAD_REQUEST).json({
-        success: false,
-        error: 'Invalid URL format. Must be a valid HTTPS URL.'
-      });
-    }
+    // Use media service to download and decrypt audio
+    const mediaBuffer = await mediaService.downloadAndDecryptAudio(url, mediaKey, fileEncSha256);
 
-    console.log(`Downloading media from URL: ${url}`);
-
-    // Download the file from WhatsApp servers
-    const response = await axios.get(url, {
-      responseType: 'arraybuffer',
-      timeout: 30000, // 30 second timeout
-      headers: {
-        'User-Agent': 'WhatsApp/2.23.24.76 A',
-        'Accept': '*/*',
-      }
-    });
-
-    // Get content type from response headers
-    const contentType = response.headers['content-type'] || 'application/octet-stream';
-    
-    // Get content length
-    const contentLength = response.headers['content-length'];
-
-    console.log(`Media downloaded successfully. Content-Type: ${contentType}, Size: ${contentLength} bytes`);
-
-    // Set appropriate headers for binary response
+    // Set appropriate headers for OGG file download
     res.set({
-      'Content-Type': contentType,
-      'Content-Length': contentLength,
+      'Content-Type': 'audio/ogg',
+      'Content-Length': mediaBuffer.length.toString(),
+      'Content-Disposition': 'attachment; filename="whatsapp-audio.ogg"',
       'Cache-Control': 'public, max-age=3600', // Cache for 1 hour
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization'
     });
 
-    // Send the binary data
-    res.send(Buffer.from(response.data));
+    // Send the decrypted OGG data
+    res.send(mediaBuffer);
 
   } catch (error) {
-    console.error('Error downloading media:', error);
-    
-    if (axios.isAxiosError(error)) {
-      if (error.code === 'ECONNABORTED') {
-        return res.status(StatusCodes.REQUEST_TIMEOUT).json({
+    // Handle specific service errors
+    if (error instanceof Error) {
+      if (error.message.includes('No WhatsApp clients are currently connected')) {
+        return res.status(StatusCodes.SERVICE_UNAVAILABLE).json({
           success: false,
-          error: 'Request timeout while downloading media file.'
+          error: error.message
         });
       }
-      
-      if (error.response?.status === 404) {
-        return res.status(StatusCodes.NOT_FOUND).json({
+
+      if (error.message.includes('Failed to load client service') || error.message.includes('Failed to load Baileys library')) {
+        return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
           success: false,
-          error: 'Media file not found or URL has expired.'
+          error: error.message
         });
       }
-      
-      if (error.response?.status === 403) {
-        return res.status(StatusCodes.FORBIDDEN).json({
+
+      if (error.message.includes('Failed to download audio from WhatsApp')) {
+        return res.status(StatusCodes.BAD_REQUEST).json({
           success: false,
-          error: 'Access denied to media file.'
-        });
-      }
-    }
-    
-    handleError(res, error, 'Failed to download media file.');
-  }
-};
-
-/**
- * Get media file info without downloading the full file
- * POST /api/media/info
- */
-export const getMediaInfo = async (req: AuthRequest, res: Response) => {
-  console.log("POST /api/media/info");
-  try {
-    const { url } = req.body;
-
-    // Validate URL parameter
-    if (!url) {
-      return res.status(StatusCodes.BAD_REQUEST).json({
-        success: false,
-        error: 'URL is required in request body.'
-      });
-    }
-
-    // Validate URL format
-    if (typeof url !== 'string' || !url.startsWith('https://')) {
-      return res.status(StatusCodes.BAD_REQUEST).json({
-        success: false,
-        error: 'Invalid URL format. Must be a valid HTTPS URL.'
-      });
-    }
-
-    console.log(`Getting media info for URL: ${url}`);
-
-    // Make a HEAD request to get file info without downloading
-    const response = await axios.head(url, {
-      timeout: 10000, // 10 second timeout
-      headers: {
-        'User-Agent': 'WhatsApp/2.23.24.76 A',
-        'Accept': '*/*',
-      }
-    });
-
-    // Extract file information
-    const mediaInfo = {
-      contentType: response.headers['content-type'] || 'unknown',
-      contentLength: response.headers['content-length'] ? parseInt(response.headers['content-length']) : null,
-      lastModified: response.headers['last-modified'] || null,
-      etag: response.headers['etag'] || null,
-      cacheControl: response.headers['cache-control'] || null,
-      status: response.status,
-      url: url
-    };
-
-    console.log(`Media info retrieved:`, mediaInfo);
-
-    res.status(StatusCodes.OK).json({
-      success: true,
-      data: mediaInfo
-    });
-
-  } catch (error) {
-    console.error('Error getting media info:', error);
-    
-    if (axios.isAxiosError(error)) {
-      if (error.code === 'ECONNABORTED') {
-        return res.status(StatusCodes.REQUEST_TIMEOUT).json({
-          success: false,
-          error: 'Request timeout while getting media info.'
-        });
-      }
-      
-      if (error.response?.status === 404) {
-        return res.status(StatusCodes.NOT_FOUND).json({
-          success: false,
-          error: 'Media file not found or URL has expired.'
-        });
-      }
-      
-      if (error.response?.status === 403) {
-        return res.status(StatusCodes.FORBIDDEN).json({
-          success: false,
-          error: 'Access denied to media file.'
+          error: error.message
         });
       }
     }
-    
-    handleError(res, error, 'Failed to get media file info.');
+
+    handleError(res, error, 'Failed to download and decrypt WhatsApp audio.');
   }
 };
