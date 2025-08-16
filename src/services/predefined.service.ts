@@ -337,7 +337,6 @@ class PredefinedService {
       });
 
       this.lastCacheRefresh = Date.now();
-      console.log(`Predefined message cache refreshed with ${this.messageCache.size} messages.`);
     } catch (error) {
       console.error('Failed to refresh predefined message cache:', error);
     }

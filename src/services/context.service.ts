@@ -37,10 +37,7 @@ class ContextService {
   private constructor() {
     // Initialize the cache
     this.refreshCache();
-    
-    // Log collection name
-    console.log(`Using context collection: ${config.mongodb_context_collection}`);
-    
+
     // Check if contexts exist and log warning if not
     this.checkContextsExist();
   }
@@ -54,8 +51,6 @@ class ContextService {
       if (count === 0) {
         console.warn('No contexts found in the database. Context generation will not work.');
         console.warn('Please import context definitions using the scripts/import-contexts.js script.');
-      } else {
-        console.log(`Found ${count} context definitions in the database.`);
       }
     } catch (error) {
       console.error('Error checking contexts:', error);
@@ -77,37 +72,27 @@ class ContextService {
       const contexts = await ContextData.find().lean();
       this.contextCache.clear();
 
-      console.log(`Found ${contexts.length} context documents in database`);
-
       // Process each segmentation field's contexts
       contexts.forEach(contextDoc => {
         const fieldMap = new Map<string, string>();
-        
+
         // Convert the MongoDB Map to a JavaScript Map
         if (contextDoc.contexts) {
           // When using lean(), MongoDB returns a plain object for Map type
           const contextEntries = Object.entries(contextDoc.contexts);
-          console.log(`Found ${contextEntries.length} contexts for ${contextDoc.segmentation_field}`);
-          
+
           contextEntries.forEach(([key, value]) => {
             if (typeof value === 'string') {
               fieldMap.set(key, value);
-              console.log(`Cached context for ${contextDoc.segmentation_field}:${key}: ${value}`);
-            } else {
-              console.log(`Skipping non-string context for ${contextDoc.segmentation_field}:${key}: ${typeof value}`);
             }
           });
-        } else {
-          console.log(`No contexts found for ${contextDoc.segmentation_field}`);
         }
-        
+
         // Store in cache
         this.contextCache.set(contextDoc.segmentation_field, fieldMap);
-        console.log(`Cached ${fieldMap.size} contexts for ${contextDoc.segmentation_field}`);
       });
 
       this.lastCacheRefresh = Date.now();
-      console.log(`Context cache refreshed with data for ${this.contextCache.size} segmentation fields.`);
     } catch (error) {
       console.error('Failed to refresh context cache:', error);
     }
@@ -156,12 +141,9 @@ class ContextService {
           fieldMap.set(value, contextValue);
         }
         
-        console.log(`Found context for ${field}:${value}: ${contextValue}`);
         return contextValue;
       }
     }
-
-    console.log(`No context found for ${field}:${value}`);
     return null;
   }
 
@@ -196,15 +178,11 @@ class ContextService {
         
         if (contextDoc && contextDoc.contexts && contextDoc.contexts[value]) {
           contextValue = contextDoc.contexts[value];
-          console.log(`Found context in database for ${field}:${value}: "${contextValue}"`);
         } else {
           // Try from cache as fallback
           const fieldMap = this.contextCache.get(field);
           if (fieldMap && fieldMap.has(value)) {
             contextValue = fieldMap.get(value);
-            console.log(`Found context in cache for ${field}:${value}: "${contextValue}"`);
-          } else {
-            console.log(`No context found for ${field}:${value}`);
           }
         }
         

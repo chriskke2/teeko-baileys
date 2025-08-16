@@ -2,6 +2,7 @@ import config from '../config';
 import axios from 'axios';
 import UserData from '../models/user.model';
 import messagingService from './messaging.service';
+import webhookService from './webhook.service';
 
 /**
  * Interface for translation webhook response
@@ -56,11 +57,19 @@ class TranslationService {
                          '';
 
       const audioMessage = message.message?.audioMessage;
-      const messageType = audioMessage ? 'audio' : 'text';
+      const imageMessage = message.message?.imageMessage;
 
-      // Skip if neither text nor audio message
-      if (!messageText.trim() && !audioMessage) {
-        console.log(`[DEBUG] Translation - Skipping message - no text or audio content from ${remoteJid}`);
+      // Determine message type
+      let messageType = 'text';
+      if (audioMessage) {
+        messageType = 'audio';
+      } else if (imageMessage) {
+        messageType = 'image';
+      }
+
+      // Skip if no content (text, audio, or image)
+      if (!messageText.trim() && !audioMessage && !imageMessage) {
+        console.log(`[DEBUG] Translation - Skipping message - no text, audio, or image content from ${remoteJid}`);
         return;
       }
 
@@ -71,7 +80,11 @@ class TranslationService {
         return;
       }
 
-      console.log(`[Translation] Processing ${messageType} message from ${waNumber}: ${messageType === 'text' ? `"${messageText}"` : 'audio message'}`);
+      console.log(`[Translation] Processing ${messageType} message from ${waNumber}: ${
+        messageType === 'text' ? `"${messageText}"` :
+        messageType === 'audio' ? 'audio message' :
+        'image message'
+      }`);
 
       // Check if user exists and is active
       const user = await UserData.findOne({ wa_num: waNumber });
@@ -98,15 +111,12 @@ class TranslationService {
 
       console.log(`[Translation] User ${waNumber} is active, forwarding ${messageType} message to translation webhook`);
 
-      // Forward to translation webhook
-      await this.forwardToTranslationWebhook(
-        messageText,
-        messageType,
-        audioMessage,
-        waNumber,
-        user,
+      // Forward to translation webhook using centralized webhook service
+      await webhookService.sendMessageWebhookUnified(
+        message,
         clientId,
-        remoteJid
+        'translate',
+        user
       );
 
     } catch (error) {
@@ -114,119 +124,7 @@ class TranslationService {
     }
   }
 
-  /**
-   * Forward message to translation webhook and handle response
-   * @param messageText The message text
-   * @param messageType The message type ('text' or 'audio')
-   * @param audioMessage The audio message object (if applicable)
-   * @param phoneNumber The user's phone number
-   * @param user The user object
-   * @param clientId The WhatsApp client ID
-   * @param recipient The recipient JID
-   */
-  private async forwardToTranslationWebhook(
-    messageText: string,
-    messageType: string,
-    audioMessage: any,
-    phoneNumber: number,
-    user: any,
-    clientId: string,
-    recipient: string
-  ): Promise<void> {
-    try {
-      if (!config.translate_webhook_url) {
-        console.warn('Translation webhook URL not configured. Sending error message.');
-        await messagingService.sendRawTextMessage(
-          clientId,
-          recipient,
-          "Translation service is currently unavailable. Please try again later."
-        );
-        return;
-      }
 
-      // Prepare webhook payload
-      const webhookPayload: any = {
-        type: messageType,
-        phoneNumber,
-        userId: user._id.toString(),
-        context: user.context || '',
-        segmentation: user.segmentation || {},
-        first_name: user.first_name || '',
-        clientId,
-        timestamp: new Date().toISOString()
-      };
-
-      // Add message content based on type
-      if (messageType === 'text') {
-        webhookPayload.message = messageText;
-      } else if (messageType === 'audio' && audioMessage) {
-        webhookPayload.audioMessage = audioMessage;
-        // Also include text if available (for transcription purposes)
-        if (messageText.trim()) {
-          webhookPayload.message = messageText;
-        }
-      }
-
-      console.log(`[Translation] Sending webhook for ${messageType} message from ${phoneNumber}`);
-      
-      // Define fallback function to send after 10 seconds
-      const fallbackFunction = async () => {
-        console.warn(`[Translation] Webhook response taking too long for user ${phoneNumber}. Sending interim message.`);
-        await messagingService.sendRawTextMessage(
-          clientId,
-          recipient,
-          "We're processing your translation request. Please wait a moment..."
-        );
-      };
-      
-      // Define response handler function
-      const responseHandler = async (response: TranslationWebhookResponse) => {
-        if (response && response.message) {
-          // Send the response message from the webhook
-          console.log(`[Translation] Received webhook response for user ${phoneNumber}. Sending message: ${response.message.substring(0, 50)}...`);
-          await messagingService.sendRawTextMessage(
-            clientId,
-            recipient,
-            response.message
-          );
-        } else {
-          console.warn(`[Translation] No valid message in webhook response for user ${phoneNumber}`);
-          await messagingService.sendRawTextMessage(
-            clientId,
-            recipient,
-            "Sorry, I couldn't process your translation request. Please try again."
-          );
-        }
-      };
-      
-      // Send the webhook request with fallback and response handlers
-      const webhookSent = await this.sendTranslationWebhook(
-        webhookPayload, 
-        fallbackFunction,
-        responseHandler
-      );
-      
-      if (!webhookSent) {
-        console.warn(`[Translation] Webhook failed for user ${phoneNumber}. Sending fallback message.`);
-        
-        // Send a simple acknowledgment if webhook fails completely
-        await messagingService.sendRawTextMessage(
-          clientId,
-          recipient,
-          "We're having trouble connecting to our translation services. Please try again later."
-        );
-      }
-    } catch (error) {
-      console.error('Error forwarding to translation webhook:', error);
-      
-      // Send a simple error message
-      await messagingService.sendRawTextMessage(
-        clientId,
-        recipient,
-        "Sorry, we encountered an error processing your translation request. Please try again later."
-      );
-    }
-  }
 
   /**
    * Send a webhook request to the translation service

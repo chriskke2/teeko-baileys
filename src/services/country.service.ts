@@ -36,9 +36,6 @@ class CountryService {
   private constructor() {
     // Initialize the cache
     this.refreshCache();
-    
-    // Log collection name
-    console.log(`Using countries collection: ${config.mongodb_countries_collection}`);
   }
 
   public static getInstance(): CountryService {
@@ -84,7 +81,6 @@ class CountryService {
       });
       
       this.lastCacheRefresh = Date.now();
-      console.log(`Country cache refreshed with ${this.countries.length} countries.`);
     } catch (error) {
       console.error('Failed to refresh country cache:', error);
     }

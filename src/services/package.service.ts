@@ -150,7 +150,6 @@ class PackageService {
       });
       
       this.lastCacheRefresh = Date.now();
-      console.log(`Package cache refreshed with ${this.packageCache.size} packages.`);
     } catch (error) {
       console.error('Failed to refresh package cache:', error);
     }
