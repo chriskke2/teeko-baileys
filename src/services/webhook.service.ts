@@ -215,28 +215,15 @@ class WebhookService {
       if (messageType === 'text') {
         webhookPayload.message = messageText;
       } else if (messageType === 'audio' && audioMessage) {
-        webhookPayload.audioMessage = {
-          url: audioMessage.url,
-          mediaKey: audioMessage.mediaKey,
-          fileEncSha256: audioMessage.fileEncSha256,
-          mimetype: audioMessage.mimetype || 'audio/ogg; codecs=opus',
-          seconds: audioMessage.seconds,
-          ptt: audioMessage.ptt
-        };
+        // Send the entire raw audioMessage object (as per original implementation)
+        webhookPayload.audioMessage = audioMessage;
         // Also include text if available (for transcription purposes)
         if (messageText.trim()) {
           webhookPayload.message = messageText;
         }
       } else if (messageType === 'image' && imageMessage) {
-        webhookPayload.imageMessage = {
-          url: imageMessage.url,
-          mediaKey: imageMessage.mediaKey,
-          fileEncSha256: imageMessage.fileEncSha256,
-          mimetype: imageMessage.mimetype || 'image/jpeg',
-          caption: imageMessage.caption || '',
-          width: imageMessage.width,
-          height: imageMessage.height
-        };
+        // Send the entire raw imageMessage object (as per original implementation)
+        webhookPayload.imageMessage = imageMessage;
         // Also include caption as message if available
         if (imageMessage.caption && imageMessage.caption.trim()) {
           webhookPayload.message = imageMessage.caption;
