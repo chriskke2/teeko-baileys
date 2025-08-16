@@ -4,6 +4,12 @@ import config from '../config';
 const clientDataSchema = new mongoose.Schema(
   {
     status: { type: String, required: true },
+    client_type: {
+      type: String,
+      required: true,
+      enum: ['chatbot', 'translate'],
+      default: 'chatbot'
+    },
     profileName: { type: String },
     phoneNumber: { type: String },
     webhookUrl: { type: String, default: null },

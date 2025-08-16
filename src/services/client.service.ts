@@ -18,6 +18,7 @@ import qrcode from 'qrcode';
 import ClientData from '../models/client.model';
 import socketService from './socket.service';
 import userService from './user.service';
+import translationService from './translation.service';
 import logger from '../utils/logger.util';
 
 const useMongoDBAuthState = async (clientId: string): Promise<{ state: { creds: AuthenticationCreds, keys: SignalKeyStore }, saveCreds: () => Promise<void> }> => {
@@ -285,12 +286,26 @@ class ClientService {
                         try {
                             const remoteJid = message.key?.remoteJid;
                             const messageText = message.message?.conversation || message.message?.extendedTextMessage?.text || 'Non-text';
-                            console.log(`[DEBUG] Processing message from ${remoteJid}: "${messageText}" -> userService.processIncomingMessage`);
+                            console.log(`[DEBUG] Processing message from ${remoteJid}: "${messageText}"`);
 
-                            // Process each message for activation codes and user interactions
-                            await userService.processIncomingMessage(message, clientId);
+                            // Get client data to determine client type
+                            const clientData = await ClientData.findById(clientId);
+                            if (!clientData) {
+                                console.error(`Client ${clientId} not found in database`);
+                                continue;
+                            }
+
+                            // Route message based on client type
+                            if (clientData.client_type === 'translate') {
+                                console.log(`[DEBUG] Routing to translation service for client ${clientId}`);
+                                await translationService.processTranslationMessage(message, clientId);
+                            } else {
+                                // Default to chatbot behavior for 'chatbot' type or any other type
+                                console.log(`[DEBUG] Routing to user service for client ${clientId} (type: ${clientData.client_type})`);
+                                await userService.processIncomingMessage(message, clientId);
+                            }
                         } catch (error) {
-                            console.error('Error processing message for activation:', error);
+                            console.error('Error processing message:', error);
                         }
                     }
                 }

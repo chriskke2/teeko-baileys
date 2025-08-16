@@ -18,7 +18,27 @@ const handleError = (res: Response, error: any, defaultMessage: string, statusCo
 export const createClient = async (req: AuthRequest, res: Response) => {
   console.log("POST /api/client/create");
   try {
-    const newClient = new ClientData({ status: 'INITIALIZED' });
+    const { client_type } = req.body;
+
+    // Validate client_type parameter
+    if (!client_type) {
+      return res.status(StatusCodes.BAD_REQUEST).json({
+        success: false,
+        error: 'client_type is required. Must be either "chatbot" or "translate".'
+      });
+    }
+
+    if (!['chatbot', 'translate'].includes(client_type)) {
+      return res.status(StatusCodes.BAD_REQUEST).json({
+        success: false,
+        error: 'Invalid client_type. Must be either "chatbot" or "translate".'
+      });
+    }
+
+    const newClient = new ClientData({
+      status: 'INITIALIZED',
+      client_type: client_type
+    });
     await newClient.save();
     res.status(StatusCodes.CREATED).json({ success: true, client: newClient });
   } catch (error) {

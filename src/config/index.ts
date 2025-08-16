@@ -48,6 +48,10 @@ if (!process.env.KB_WEBHOOK_URL) {
     console.warn('Missing KB_WEBHOOK_URL environment variable. Knowledge base webhook functionality will not work.');
 }
 
+if (!process.env.TRANSLATE_WEBHOOK_URL) {
+    console.warn('Missing TRANSLATE_WEBHOOK_URL environment variable. Translation webhook functionality will not work.');
+}
+
 const config = {
   port: process.env.PORT || 3000,
   mongodb_uri: process.env.MONGODB_URI,
@@ -60,6 +64,7 @@ const config = {
   mongodb_image_collection: process.env.MONGODB_IMAGE_COLLECTION || 'images',
   webhook_url: process.env.WEBHOOK_URL,
   kb_webhook_url: process.env.KB_WEBHOOK_URL,
+  translate_webhook_url: process.env.TRANSLATE_WEBHOOK_URL,
   jwt_key: process.env.JWTKEY,
   subscribe_required: process.env.SUBSCRIBE === 'true' || process.env.SUBSCRIBE === undefined, // Default to true if not set
 };
