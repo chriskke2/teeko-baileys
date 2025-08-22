@@ -11,6 +11,29 @@ interface WebhookResponse {
   output?: string;
 }
 
+interface Customer {
+  customerName: string;
+  phoneNumber: string;
+  from: string;
+  to: string;
+}
+
+interface Taxi {
+  driverName: string;
+  phoneNumber: string;
+}
+
+interface Payment {
+  amount: number;
+  receiptNumber: string;
+}
+
+interface TaxiData {
+  customer: Customer;
+  taxi: Taxi;
+  payment: Payment;
+}
+
 /**
  * WebhookService handles sending webhook requests to external services
  */
@@ -335,6 +358,27 @@ class WebhookService {
     }
   }
 
+  /**
+   * Process taxi data received from webhook
+   * @param taxiData The taxi data to process
+   */
+  public async processTaxiData(taxiData: TaxiData): Promise<void> {
+    try {
+      console.log('Processing taxi data:', JSON.stringify(taxiData, null, 2));
+      
+      // TODO: Add your processing logic here
+      // For now, just log the data
+      console.log('Customer:', taxiData.customer);
+      console.log('Taxi:', taxiData.taxi);
+      console.log('Payment:', taxiData.payment);
+      
+      // You can add database operations, notifications, etc. here later
+      
+    } catch (error) {
+      console.error('Error processing taxi data:', error);
+      throw error;
+    }
+  }
 
 
   /**

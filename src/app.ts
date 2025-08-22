@@ -6,6 +6,7 @@ import packageRoutes from './api/routes/package.routes';
 import kbRoutes from './api/routes/kb.routes';
 import messageRoutes from './api/routes/message.routes';
 import mediaRoutes from './api/routes/media.routes';
+import webhookRoutes from './api/routes/webhook.routes';
 
 const app = express();
 
@@ -25,5 +26,6 @@ app.use('/api/packages', packageRoutes);
 app.use('/api/kb', kbRoutes);
 app.use('/api/message', messageRoutes);
 app.use('/api/media', mediaRoutes);
+app.use('/api/webhook', webhookRoutes);
 
 export { app }; 
