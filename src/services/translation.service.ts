@@ -109,15 +109,12 @@ class TranslationService {
         return;
       }
 
-      console.log(`[Translation] User ${waNumber} is active, forwarding ${messageType} message to translation webhook`);
+      console.log(`User ${waNumber} is active, forwarding ${messageType} message to translation webhook`);
 
-      // Forward to translation webhook using centralized webhook service
-      await webhookService.sendMessageWebhookUnified(
-        message,
-        clientId,
-        'translate',
-        user
-      );
+      // Note: Webhook processing is now handled by the universal webhook service in client.service.ts
+      // This ensures consistent behavior for all message types (text, audio, image) across both client types
+      // No need to call webhook service here to avoid duplication
+      console.log(`Webhook will be handled by universal webhook service`);
 
     } catch (error) {
       console.error('Error processing translation message:', error);
@@ -151,13 +148,13 @@ class TranslationService {
         return false;
       }
 
-      console.log(`[Translation] Sending webhook for message from ${payload.phoneNumber}`);
+      console.log(`Sending webhook for message from ${payload.phoneNumber}`);
       
       // Set up fallback timer (10 seconds)
       let fallbackExecuted = false;
       const fallbackTimer = setTimeout(async () => {
         fallbackExecuted = true;
-        console.log(`[Translation] Webhook response taking too long (>10s) for ${payload.phoneNumber}. Sending fallback message.`);
+        console.log(`Webhook response taking too long (>10s) for ${payload.phoneNumber}. Sending fallback message.`);
         if (onFallback) await onFallback();
       }, 10000);
       
@@ -172,7 +169,7 @@ class TranslationService {
       // Clear the fallback timer
       clearTimeout(fallbackTimer);
       
-      console.log(`[Translation] Webhook sent successfully. Status: ${response.status}`);
+      console.log(`Webhook sent successfully. Status: ${response.status}`);
       
       // Process the response regardless of fallback execution
       if (onResponse && response.data) {

@@ -203,20 +203,25 @@ class WebhookService {
 
       // Skip if no content (text, audio, or image)
       if (!messageText.trim() && !audioMessage && !imageMessage) {
-        console.log(`[WEBHOOK] Skipping message - no text, audio, or image content from ${message.key?.remoteJid}`);
+        console.log(`Skipping message - no text, audio, or image content from ${message.key?.remoteJid}`);
         return false;
       }
 
       // Extract phone number from remoteJid
       const remoteJid = message.key?.remoteJid;
+      // Filter out group messages
+      if (remoteJid && remoteJid.endsWith('@g.us')) {
+        console.log(`Skipping group message from ${remoteJid}`);
+        return false;
+      }
       const phoneNumber = remoteJid ? parseInt(remoteJid.split('@')[0]) : null;
 
       if (!phoneNumber || isNaN(phoneNumber)) {
-        console.log(`[WEBHOOK] Invalid phone number format: ${remoteJid}`);
+        console.log(`Invalid phone number format: ${remoteJid}`);
         return false;
       }
 
-      console.log(`[WEBHOOK] Sending ${clientType} webhook for ${messageType} message from ${phoneNumber}`);
+      console.log(`Sending ${clientType} webhook for ${messageType} message from ${phoneNumber}`);
 
       // Create base webhook payload
       const webhookPayload: any = {
@@ -232,6 +237,12 @@ class WebhookService {
         webhookPayload.context = user.context || '';
         webhookPayload.segmentation = user.segmentation || {};
         webhookPayload.first_name = user.first_name || '';
+      }
+      
+      // Add user data for chatbot clients (first_name and context)
+      if (clientType === 'chatbot' && user) {
+        webhookPayload.first_name = user.first_name || '';
+        webhookPayload.context = user.context || '';
       }
 
       // Add message content based on type
@@ -253,59 +264,48 @@ class WebhookService {
         }
       }
 
-      // For translate clients, handle response with fallback timer
-      if (clientType === 'translate') {
-        return await this.sendTranslateWebhookWithResponse(
-          webhookUrl,
-          webhookPayload,
-          clientId,
-          message.key?.remoteJid || '',
-          phoneNumber
-        );
-      } else {
-        // For chatbot clients, just send without waiting for response
-        const response = await axios.post(webhookUrl, webhookPayload, {
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          timeout: 30000 // 30 second timeout
-        });
-
-        console.log(`[WEBHOOK] ${clientType} webhook sent successfully. Status: ${response.status}`);
-
-        return response.status >= 200 && response.status < 300;
-      }
+      // For both client types, handle response with fallback timer
+      return await this.sendWebhookWithResponse(
+        webhookUrl,
+        webhookPayload,
+        clientId,
+        message.key?.remoteJid || '',
+        phoneNumber,
+        clientType
+      );
 
     } catch (error) {
-      console.error(`[WEBHOOK] Error sending ${clientType} webhook:`, error);
+      console.error(`Error sending ${clientType} webhook:`, error);
       return false;
     }
   }
 
   /**
-   * Send translate webhook with response handling and fallback timer
+   * Send webhook with response handling and fallback timer for both client types
    * @param webhookUrl The webhook URL
    * @param payload The webhook payload
    * @param clientId The WhatsApp client ID
    * @param remoteJid The remote JID
    * @param phoneNumber The phone number
+   * @param clientType The client type ('chatbot' or 'translate')
    * @returns Promise<boolean> Success status
    */
-  private async sendTranslateWebhookWithResponse(
+  private async sendWebhookWithResponse(
     webhookUrl: string,
     payload: any,
     clientId: string,
     remoteJid: string,
-    phoneNumber: number
+    phoneNumber: number,
+    clientType: 'chatbot' | 'translate'
   ): Promise<boolean> {
     try {
-      console.log(`[WEBHOOK] Sending translate webhook for ${payload.type} message from ${phoneNumber}`);
+      console.log(`Sending ${clientType} webhook for ${payload.type} message from ${phoneNumber}`);
 
       // Set up fallback timer (10 seconds)
       let fallbackExecuted = false;
       const fallbackTimer = setTimeout(async () => {
         fallbackExecuted = true;
-        console.log(`[WEBHOOK] Webhook response taking too long (>10s) for ${phoneNumber}. Sending fallback message.`);
+        console.log(`Webhook response taking too long (>10s) for ${phoneNumber}. Sending fallback message.`);
         await this.sendFallbackMessage(clientId, remoteJid);
       }, 10000);
 
@@ -320,7 +320,7 @@ class WebhookService {
       // Clear the fallback timer
       clearTimeout(fallbackTimer);
 
-      console.log(`[WEBHOOK] translate webhook sent successfully. Status: ${response.status}`);
+      console.log(`${clientType} webhook sent successfully. Status: ${response.status}`);
 
       // Always process the response, even if fallback was executed
       if (response.data) {
@@ -328,19 +328,19 @@ class WebhookService {
           const message = this.extractMessageFromResponse(response.data);
           if (message) {
             if (fallbackExecuted) {
-              console.log(`[WEBHOOK] Received webhook response for user ${phoneNumber} (after fallback). Sending message: ${message.substring(0, 50)}...`);
+              console.log(`Received webhook response for user ${phoneNumber} (after fallback). Sending message: ${message.substring(0, 50)}...`);
             } else {
-              console.log(`[WEBHOOK] Received webhook response for user ${phoneNumber}. Sending message: ${message.substring(0, 50)}...`);
+              console.log(`Received webhook response for user ${phoneNumber}. Sending message: ${message.substring(0, 50)}...`);
             }
             await this.sendResponseMessage(clientId, remoteJid, message);
           } else {
-            console.warn(`[WEBHOOK] No valid message in webhook response for user ${phoneNumber}`);
+            console.warn(`No valid message in webhook response for user ${phoneNumber}`);
             if (!fallbackExecuted) {
               await this.sendErrorMessage(clientId, remoteJid);
             }
           }
         } catch (error) {
-          console.error('Error processing translation webhook response:', error);
+          console.error('Error processing webhook response:', error);
           if (!fallbackExecuted) {
             await this.sendErrorMessage(clientId, remoteJid);
           }
@@ -350,7 +350,7 @@ class WebhookService {
       return response.status >= 200 && response.status < 300;
 
     } catch (error) {
-      console.error('Error sending translation webhook:', error);
+      console.error(`Error sending ${clientType} webhook:`, error);
 
       // Send fallback message if webhook fails
       await this.sendFallbackMessage(clientId, remoteJid);

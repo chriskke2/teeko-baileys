@@ -256,63 +256,50 @@ class OnboardingService {
         console.log(`Moving to next step: ${nextStep.field} (sequence ${nextStep.sequence})`);
         await this.sendOnboardingQuestion(nextStep.field, clientId, recipient);
       } else {
-        // No more steps, onboarding complete - Set status to ACTIVE
-        console.log(`Onboarding complete after step: ${currentStep}. Setting user ${user.wa_num} to ACTIVE status.`);
-        
-        // Get the latest user data to ensure we have the most up-to-date segmentation
+        // No more steps, onboarding complete
+        console.log(`Onboarding complete after step: ${currentStep}. Preparing final onboarding message for user ${user.wa_num}.`);
+
+        // Get the latest user data to ensure we have the most up-to-date info for templating
         const updatedUser = await UserData.findById(user._id).lean();
         if (!updatedUser) {
           console.error(`User ${user.wa_num} not found when completing onboarding`);
           return;
         }
-        
-        // Generate context from segmentation data
-        let userContext = '';
-        try {
-          if (updatedUser.segmentation) {
-            console.log(`Generating context for user ${updatedUser.wa_num} with segmentation:`, updatedUser.segmentation);
-            userContext = await contextService.generateFullContext(updatedUser.segmentation);
-            console.log(`Generated context for user ${updatedUser.wa_num}: "${userContext}"`);
-          } else {
-            console.log(`No segmentation data found for user ${updatedUser.wa_num}`);
-          }
-        } catch (error) {
-          console.error(`Error generating context for user ${updatedUser.wa_num}:`, error);
-        }
-        
-        // Update user status to ACTIVE, clear current_step, and save context
-        const result = await UserData.findByIdAndUpdate(
-          updatedUser._id, 
-          { 
-            status: 'ACTIVE',
-            current_step: null,
-            context: userContext
-          },
-          { new: true }
-        );
-        
-        console.log(`Updated user ${updatedUser.wa_num} with context:`, result?.context);
-        
-        // Check for onboarding_complete message
+
+        // 1) Send the final onboarding message first
         const completionMessage = await predefinedService.getMessage('onboarding_complete', 'welcome');
-        
         if (completionMessage) {
-          // Replace template variables
           let message = completionMessage.message;
           if (message.includes('{first_name}') && updatedUser.first_name) {
             message = message.replace('{first_name}', updatedUser.first_name);
           }
-          
-          // Send personalized completion message
           await messagingService.sendRawTextMessage(clientId, recipient, message);
         } else {
-          // Fallback to default message if no predefined message exists
           await messagingService.sendRawTextMessage(
             clientId,
             recipient,
             "You've completed all the onboarding questions. Thank you! Your Teko account is now active and ready to use."
           );
         }
+
+        // 2) After sending the final message, generate context and activate the user
+        let userContext = '';
+        try {
+          if (updatedUser.segmentation) {
+            userContext = await contextService.generateFullContext(updatedUser.segmentation);
+          }
+        } catch (error) {
+          console.error(`Error generating context for user ${updatedUser.wa_num}:`, error);
+        }
+
+        await UserData.findByIdAndUpdate(
+          updatedUser._id,
+          {
+            status: 'ACTIVE',
+            current_step: null,
+            context: userContext
+          }
+        );
       }
     } catch (error) {
       console.error('Error finding next step:', error);

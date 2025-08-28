@@ -176,6 +176,20 @@ export const syncClientStatuses = async (req: AuthRequest, res: Response) => {
   }
 };
 
+export const refreshIndexing = async (req: AuthRequest, res: Response) => {
+  console.log("POST /api/client/refresh-indexing");
+  try {
+    // Placeholder for future indexing refresh logic
+    // Currently no indexing service exists; this endpoint is a no-op hook
+    res.status(StatusCodes.OK).json({
+      success: true,
+      message: 'Index refresh initiated.'
+    });
+  } catch (error) {
+    handleError(res, error, 'Failed to refresh indexing.');
+  }
+};
+
 export const getClientById = async (req: AuthRequest, res: Response) => {
   console.log("GET /api/client/:clientId");
   try {

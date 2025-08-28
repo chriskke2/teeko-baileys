@@ -284,8 +284,8 @@ class ClientService {
                 await saveCreds();
             }
 
-            if (events['messages.upsert']) {
-                console.log(`[DEBUG] Incoming message detected for client ${clientId}, type: ${events['messages.upsert'].type}, count: ${events['messages.upsert'].messages?.length || 0}`);
+                            if (events['messages.upsert']) {
+                    console.log(`Incoming message detected for client ${clientId}, type: ${events['messages.upsert'].type}, count: ${events['messages.upsert'].messages?.length || 0}`);
 
                 // Only skip WebSocket emission if disconnected, but still process messages
                 if (!this.disconnectedClients.has(clientId)) {
@@ -300,8 +300,21 @@ class ClientService {
                     for (const message of events['messages.upsert'].messages) {
                         try {
                             const remoteJid = message.key?.remoteJid;
+                            // Guard: skip stub/no-content messages (often due to missing/invalid keys)
+                            if (!message.message) {
+                                console.warn(
+                                    'Received stub/no-content message. Skipping processing.',
+                                    {
+                                        clientId,
+                                        remoteJid,
+                                        messageStubType: (message as any).messageStubType,
+                                        messageStubParameters: (message as any).messageStubParameters
+                                    }
+                                );
+                                continue;
+                            }
                             const messageText = message.message?.conversation || message.message?.extendedTextMessage?.text || 'Non-text';
-                            console.log(`[DEBUG] Processing message from ${remoteJid}: "${messageText}"`);
+                                                            console.log(`Processing message from ${remoteJid}: "${messageText}"`);
 
                             // Get client data to determine client type
                             const clientData = await ClientData.findById(clientId);
@@ -310,22 +323,33 @@ class ClientService {
                                 continue;
                             }
 
+                            // Capture user status at the time of message receipt (before any services run)
+                            let userAtReceipt: any = null;
+                            const receiptJid = message.key?.remoteJid;
+                            const receiptPhone = receiptJid ? parseInt(receiptJid.split('@')[0]) : null;
+                            if (receiptPhone && !isNaN(receiptPhone)) {
+                                userAtReceipt = await UserData.findOne({ wa_num: receiptPhone }).lean();
+                            }
+
                             // Route message based on client type
                             if (clientData.client_type === 'translate') {
-                                console.log(`[DEBUG] Routing to translation service for client ${clientId}`);
+                                                                    console.log(`Routing to translation service for client ${clientId}`);
                                 await translationService.processTranslationMessage(message, clientId);
                             } else {
                                 // Default to chatbot behavior for 'chatbot' type or any other type
                                 console.log(`[DEBUG] Routing to user service for client ${clientId} (type: ${clientData.client_type})`);
                                 await userService.processIncomingMessage(message, clientId);
                             }
+
+                            // Process webhook for this specific message using the already-fetched client data
+                            this.processWebhookAsync(clientId, [message], clientData, userAtReceipt);
                         } catch (error) {
                             console.error('Error processing message:', error);
                         }
                     }
 
                     // BACKGROUND: Process webhook (non-blocking)
-                    this.processWebhookAsync(clientId, events['messages.upsert'].messages);
+                    // this.processWebhookAsync(clientId, events['messages.upsert'].messages);
                 }
             }
             
@@ -632,17 +656,25 @@ class ClientService {
     }
 
     // Non-blocking webhook processing using centralized webhook service
-    private async processWebhookAsync(clientId: string, messages: any[]) {
+    private async processWebhookAsync(clientId: string, messages: any[], clientData: any, userAtReceipt?: any) {
         // Process webhook in background without blocking
         setImmediate(async () => {
             try {
-                const clientData = await ClientData.findOne({ clientId }).lean();
-                if (!clientData) return;
-
+                // Starting webhook processing
+                
+                // Use the clientData passed to this function
                 for (const message of messages) {
-                    if (message.key.fromMe || message.key.remoteJid === 'status@broadcast') continue;
+                    // Processing message
+                    
+                    if (message.key.fromMe || message.key.remoteJid === 'status@broadcast') {
+                        // Skipping message
+                        continue;
+                    }
 
                     let user = null;
+
+                    // Respect user status snapshot at message receipt to avoid race with onboarding activation
+                    const isActiveAtReceipt = userAtReceipt && userAtReceipt.status === 'ACTIVE';
 
                     // For translate clients, get user data
                     if (clientData.client_type === 'translate') {
@@ -650,26 +682,49 @@ class ClientService {
                         const phoneNumber = remoteJid ? parseInt(remoteJid.split('@')[0]) : null;
 
                         if (phoneNumber && !isNaN(phoneNumber)) {
-                            user = await UserData.findOne({ wa_num: phoneNumber }).lean();
-
-                            // Skip if user not found or not active for translate clients
-                            if (!user || user.status !== 'ACTIVE') {
-                                console.log(`[WEBHOOK] Skipping message for inactive/missing user ${phoneNumber}`);
+                            // If snapshot says not active, skip immediately
+                            if (!isActiveAtReceipt) {
+                                console.log(`Skipping message for inactive/missing user ${phoneNumber}`);
                                 continue;
                             }
+                            // Optionally refresh user for payload fields
+                            user = userAtReceipt || await UserData.findOne({ wa_num: phoneNumber }).lean();
+                        }
+                    }
+                    
+                    // For chatbot clients, get user data for first_name and context
+                    if (clientData.client_type === 'chatbot') {
+                        const remoteJid = message.key?.remoteJid;
+                        const phoneNumber = remoteJid ? parseInt(remoteJid.split('@')[0]) : null;
+
+                        if (phoneNumber && !isNaN(phoneNumber)) {
+                            // If snapshot says not active, skip immediately
+                            if (!isActiveAtReceipt) {
+                                console.log(`Skipping message for inactive/missing user ${phoneNumber}`);
+                                continue;
+                            }
+                            // Optionally refresh user for payload fields
+                            user = userAtReceipt || await UserData.findOne({ wa_num: phoneNumber }).lean();
                         }
                     }
 
-                    // Use centralized webhook service
-                    await webhookService.sendMessageWebhookUnified(
-                        message,
-                        clientId,
-                        clientData.client_type,
-                        user
-                    );
+                    // Use universal webhook service for both client types
+                    // This ensures audio messages and all message types are handled consistently
+                    console.log(`Processing ${clientData.client_type} webhook for message from ${message.key?.remoteJid}`);
+                    
+                    try {
+                        await webhookService.sendMessageWebhookUnified(
+                            message,
+                            clientId,
+                            clientData.client_type,
+                            user
+                        );
+                    } catch (webhookError) {
+                        console.error(`Error sending webhook:`, webhookError);
+                    }
                 }
             } catch (error) {
-                console.error(`[WEBHOOK] Error processing webhook for client ${clientId}:`, error);
+                console.error(`Error processing webhook for client ${clientId}:`, error);
             }
         });
     }
