@@ -22,5 +22,5 @@ externalPort = 80
 
 [deployment]
 build = ["sh", "-c", "npm run build"]
-run = ["sh", "-c", "npm run start:local"]
+run = ["sh", "-c", "npm run start:dev"]
 deploymentTarget = "gce"
