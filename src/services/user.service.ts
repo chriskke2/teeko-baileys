@@ -4,10 +4,10 @@
   import activationService from './activation.service';
   import messagingService from './messaging.service';
   import webhookService from './webhook.service';
-  import predefinedService from './predefined.service';
+
   import { UserState } from './activation.service';
   import mongoose from 'mongoose';
-  import config from '../config';
+
 
   // Forward declaration to avoid circular dependency
   let clientService: any;
@@ -269,6 +269,7 @@
 
     /**
      * Main message handler that routes incoming messages based on user state
+     * This method now only handles existing users since user creation is handled in client service
      * @param message The message object from Baileys
      * @param clientId The WhatsApp client ID
      */
@@ -280,64 +281,40 @@
           console.log(`[DEBUG] Skipping message - not a private message. RemoteJid: ${remoteJid}`);
           return; // Not a private message
         }
-        
+
         // Skip messages sent by this client (fromMe: true)
         if (message.key?.fromMe) {
           return;
         }
-        
+
         // Extract the number from the JID (e.g., "60182669238@s.whatsapp.net" -> 60182669238)
         const waNumber = parseInt(remoteJid.split('@')[0]);
         if (isNaN(waNumber)) {
           console.log('Invalid WhatsApp number format:', remoteJid);
           return;
         }
-        
+
         // Extract message text
         let messageText = messagingService.extractMessageText(message);
-        
-        // Check if message is empty
-        if (!messageText) {
-          return;
-        }
-        
+
         // Extract sender name
         const senderName = message.pushName || 'User';
-        
-        // Find the user in the database
+
+        // Find the user in the database - user should exist since client service handles creation
         let user = await UserData.findOne({ wa_num: waNumber });
         if (!user) {
-          // Check if subscription is required
-          if (!config.subscribe_required) {
-            // Subscription not required - create user automatically and start onboarding
-            console.log(`SUBSCRIBE=false: Auto-creating user ${waNumber} and starting onboarding`);
-            user = await this.createUserForDirectOnboarding(waNumber, senderName);
-            if (!user) {
-              console.error('Failed to create user for direct onboarding');
-              return;
-            }
-
-            // Send welcome message and start onboarding if needed
-            await this.handleNewUserWelcome(user, clientId, remoteJid);
-            return; // Don't process the original message further
-          } else {
-            // User not found and subscription is required - handle with not registered message
-            await activationService.handleUnregisteredUser(clientId, remoteJid);
-            return;
-          }
+          console.log(`User ${waNumber} not found in database. This should not happen with new logic.`);
+          return;
         }
 
         // Update first_name if not set or different from sender name
         const firstName = senderName ? senderName.split(' ')[0] : '';
         if (!user.first_name || (firstName && user.first_name !== firstName)) {
-          console.log(`Updating first name for user ${waNumber} from "${user.first_name || 'none'}" to "${firstName}"`);
           await UserData.updateOne(
             { _id: user._id },
             { first_name: firstName }
           );
         }
-
-        console.log(`Received message from user ${waNumber}, status: ${user.status}, current_step: ${user.current_step || 'none'}`);
 
         // Route message based on user state
         switch (user.status) {
@@ -379,12 +356,8 @@
     }
 
     /**
-     * Handle messages from active users (after onboarding)
-     * @param user The user object
-     * @param message The full message object from Baileys
-     * @param clientId WhatsApp client ID
-     * @param recipient Recipient JID
-     * @param senderName Sender's name
+     * Handle messages from active users
+     * Since webhook processing is now handled in client service, this method is simplified
      */
     private async handleActiveUserMessage(
       user: any,
@@ -394,23 +367,12 @@
       senderName: string
     ): Promise<void> {
       try {
-        // Extract phone number from recipient JID
-        const phoneNumber = recipient.split('@')[0];
-        
-        // Extract message text from the full message object
-        const messageText = message.message?.conversation || 
-                          message.message?.extendedTextMessage?.text || 
-                          '';
-        
-        console.log(`Processing message from active user ${phoneNumber} (webhook will be handled by universal webhook service)`);
-        
-        // Note: Webhook processing is now handled by the universal webhook service in client.service.ts
-        // This ensures consistent behavior for all message types (text, audio, image) across both client types
-        // No need to call webhook service here to avoid duplication
-        
+        // Active user messages are now handled by webhook service in client.service.ts
+        // This method is kept for compatibility but does minimal processing
+
       } catch (error) {
         console.error('Error handling active user message:', error);
-        
+
         // Send a simple error message
         await messagingService.sendRawTextMessage(
           clientId,
@@ -420,103 +382,7 @@
       }
     }
 
-    /**
-     * Create a user for direct onboarding when subscription is not required
-     * @param waNumber WhatsApp number
-     * @param senderName Sender's name
-     * @returns Created user object or null if failed
-     */
-    private async createUserForDirectOnboarding(waNumber: number, senderName: string): Promise<any | null> {
-      try {
-        // Extract first name from sender name
-        const firstName = senderName ? senderName.split(' ')[0] : '';
 
-        // Check if onboarding steps exist
-        const onboardingSteps = await predefinedService.getAllByType('onboarding');
-        const hasOnboardingSteps = onboardingSteps && onboardingSteps.length > 0;
-
-        // Get the first step if onboarding exists
-        let firstStep = null;
-        if (hasOnboardingSteps) {
-          const sortedSteps = onboardingSteps.sort((a: any, b: any) => {
-            const seqA = typeof a.sequence === 'number' ? a.sequence : 999;
-            const seqB = typeof b.sequence === 'number' ? b.sequence : 999;
-            return seqA - seqB;
-          });
-          firstStep = sortedSteps[0]?.field || null;
-        }
-
-        // Create user with minimal data - no package, no subscription dates
-        const newUser = new UserData({
-          wa_num: waNumber,
-          first_name: firstName,
-          status: hasOnboardingSteps ? UserState.ONBOARDING : UserState.ACTIVE,
-          current_step: hasOnboardingSteps ? firstStep : null,
-          // Set default quotas for users without subscription
-          text_quota: 1000, // Default text quota
-          aud_quota: 100,   // Default audio quota
-          img_quota: 100,   // Default image quota
-          // No subscription dates since subscription is not required
-          subscription_start: null,
-          subscription_end: null,
-          package_id: null,
-          code: null
-        });
-
-        const savedUser = await newUser.save();
-        console.log(`Created user ${waNumber} for direct onboarding with status: ${savedUser.status}`);
-
-        return savedUser;
-      } catch (error) {
-        console.error('Error creating user for direct onboarding:', error);
-        return null;
-      }
-    }
-
-    /**
-     * Handle welcome message and onboarding for newly created users
-     * @param user The user object
-     * @param clientId WhatsApp client ID
-     * @param recipient Recipient JID
-     */
-    private async handleNewUserWelcome(user: any, clientId: string, recipient: string): Promise<void> {
-      try {
-        const firstName = user.first_name || 'there';
-
-        if (user.status === UserState.ONBOARDING && user.current_step) {
-          // Send welcome message and start onboarding
-          await messagingService.sendRawTextMessage(
-            clientId,
-            recipient,
-            `Hi ${firstName}. I am Teeko! Let's get you set up with a few quick questions. It only takes 1 minute!`
-          );
-
-          // Send the first onboarding question
-          const message = await predefinedService.getMessage('onboarding', user.current_step);
-          const hasOptions = message && message.options && message.options.length > 0;
-          if (hasOptions) {
-            await messagingService.sendOptionsMessage(user.current_step, 'onboarding', clientId, recipient);
-          } else {
-            await messagingService.sendMessage(`onboarding/${user.current_step}`, clientId, recipient);
-          }
-        } else {
-          // No onboarding needed, user is active
-          await messagingService.sendRawTextMessage(
-            clientId,
-            recipient,
-            `Hi ${firstName}! Welcome to our chatbot. How can I help you today?`
-          );
-        }
-      } catch (error) {
-        console.error('Error handling new user welcome:', error);
-        // Send a simple welcome message as fallback
-        await messagingService.sendRawTextMessage(
-          clientId,
-          recipient,
-          "Welcome! How can I help you today?"
-        );
-      }
-    }
 
     // Legacy method for backward compatibility
     public async sendActivationMessage(clientId: string, waNumber: number, code: string): Promise<boolean> {

@@ -57,8 +57,6 @@ class WebhookService {
    * @returns The extracted message or undefined
    */
   private extractMessageFromResponse(responseData: any): string | undefined {
-    console.log('Processing webhook response:', JSON.stringify(responseData).substring(0, 200) + '...');
-    
     try {
       // Handle array response format with output field
       if (Array.isArray(responseData) && responseData.length > 0) {
@@ -123,7 +121,7 @@ class WebhookService {
         fallbackExecuted = true;
         console.log(`Webhook response taking too long (>10s) for ${payload.phoneNumber}. Sending fallback message.`);
         if (onFallback) await onFallback();
-      }, 10000);
+      }, 7000);
       
       // Send the webhook request with 30-second timeout
       const response = await axios.post(config.webhook_url, webhookPayload, {
@@ -221,8 +219,6 @@ class WebhookService {
         return false;
       }
 
-      console.log(`Sending ${clientType} webhook for ${messageType} message from ${phoneNumber}`);
-
       // Create base webhook payload
       const webhookPayload: any = {
         type: messageType,
@@ -299,15 +295,13 @@ class WebhookService {
     clientType: 'chatbot' | 'translate'
   ): Promise<boolean> {
     try {
-      console.log(`Sending ${clientType} webhook for ${payload.type} message from ${phoneNumber}`);
-
       // Set up fallback timer (10 seconds)
       let fallbackExecuted = false;
       const fallbackTimer = setTimeout(async () => {
         fallbackExecuted = true;
         console.log(`Webhook response taking too long (>10s) for ${phoneNumber}. Sending fallback message.`);
         await this.sendFallbackMessage(clientId, remoteJid);
-      }, 10000);
+      }, 7000);
 
       // Send the webhook request with 30-second timeout
       const response = await axios.post(webhookUrl, payload, {

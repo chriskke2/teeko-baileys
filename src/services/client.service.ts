@@ -18,7 +18,7 @@ import qrcode from 'qrcode';
 import ClientData from '../models/client.model';
 import socketService from './socket.service';
 import userService from './user.service';
-import translationService from './translation.service';
+import messagingService from './messaging.service';
 import logger from '../utils/logger.util';
 import webhookService from './webhook.service';
 import UserData from '../models/user.model';
@@ -285,71 +285,120 @@ class ClientService {
             }
 
                             if (events['messages.upsert']) {
-                    console.log(`Incoming message detected for client ${clientId}, type: ${events['messages.upsert'].type}, count: ${events['messages.upsert'].messages?.length || 0}`);
+                // Only log for 'notify' type messages to reduce noise
+                if (events['messages.upsert'].type === 'notify') {
+                    console.log(`Processing ${events['messages.upsert'].messages?.length || 0} message(s) for client ${clientId}`);
+                }
 
-                // Only skip WebSocket emission if disconnected, but still process messages
+                // Step 2: WebSocket emission
                 if (!this.disconnectedClients.has(clientId)) {
                     io.to(clientId).emit('messages', { type: 'messages.upsert', data: events['messages.upsert'] });
                 }
 
-                // Always process incoming messages regardless of disconnection status
-                // This ensures users get responses even during temporary connection issues
+                // Process incoming messages
                 if (events['messages.upsert'].type === 'notify' &&
                     Array.isArray(events['messages.upsert'].messages)) {
 
                     for (const message of events['messages.upsert'].messages) {
                         try {
-                            const remoteJid = message.key?.remoteJid;
-                            // Guard: skip stub/no-content messages (often due to missing/invalid keys)
-                            if (!message.message) {
-                                console.warn(
-                                    'Received stub/no-content message. Skipping processing.',
-                                    {
-                                        clientId,
-                                        remoteJid,
-                                        messageStubType: (message as any).messageStubType,
-                                        messageStubParameters: (message as any).messageStubParameters
-                                    }
-                                );
+                            // Skip messages from this client or status broadcasts
+                            if (message.key.fromMe || message.key.remoteJid === 'status@broadcast') {
                                 continue;
                             }
-                            const messageText = message.message?.conversation || message.message?.extendedTextMessage?.text || 'Non-text';
-                                                            console.log(`Processing message from ${remoteJid}: "${messageText}"`);
 
-                            // Get client data to determine client type
+                            // Step 3: Validate message type (text, image, audio, or decryption failure)
+                            const messageText = message.message?.conversation ||
+                                              message.message?.extendedTextMessage?.text || '';
+                            const audioMessage = message.message?.audioMessage;
+                            const imageMessage = message.message?.imageMessage;
+
+                            // Check if message has text, audio, or image content
+                            const hasText = messageText && messageText.trim();
+                            const hasAudio = audioMessage && audioMessage.url;
+                            const hasImage = imageMessage && imageMessage.url;
+
+                            // Check for decryption failure (message exists but no content)
+                            const hasMessageObject = message.message && Object.keys(message.message).length > 0;
+                            const isDecryptionFailure = hasMessageObject && !hasText && !hasAudio && !hasImage;
+
+                            if (!hasText && !hasAudio && !hasImage && !isDecryptionFailure) {
+                                continue; // Skip messages without any content or decryption failure
+                            }
+
+                            // Extract phone number and validate
+                            const remoteJid = message.key?.remoteJid;
+                            if (!remoteJid || (!remoteJid.includes('@s.whatsapp.net') && !remoteJid.includes('@lid'))) {
+                                continue; // Skip non-private messages silently
+                            }
+
+                            const phoneNumber = parseInt(remoteJid.split('@')[0]);
+                            if (isNaN(phoneNumber)) {
+                                continue; // Skip invalid phone numbers silently
+                            }
+
+                            // Handle decryption failure case
+                            if (isDecryptionFailure) {
+                                console.log(`Decryption failed for message from ${phoneNumber}`);
+
+                                // Check if user exists
+                                let user = await UserData.findOne({ wa_num: phoneNumber });
+
+                                if (!user) {
+                                    // New user with decryption failure - start onboarding
+                                    console.log(`New user ${phoneNumber} with decryption failure - starting onboarding`);
+                                    await this.handleNewUser(phoneNumber, message.pushName || 'User', clientId, remoteJid);
+                                } else {
+                                    // Existing user with decryption failure - skip and ignore
+                                    console.log(`Existing user ${phoneNumber} with decryption failure - ignoring message`);
+                                }
+                                continue; // Exit message processing for decryption failures
+                            }
+
+                            // Determine message type for logging (normal messages)
+                            let messageType = 'text';
+                            let logContent = messageText;
+                            if (hasAudio) {
+                                messageType = 'audio';
+                                logContent = 'audio message';
+                            } else if (hasImage) {
+                                messageType = 'image';
+                                logContent = 'image message';
+                            }
+
+                            console.log(`Processing ${messageType} from ${phoneNumber}: "${logContent}"`);
+
+                            // Get client data
                             const clientData = await ClientData.findById(clientId);
                             if (!clientData) {
                                 console.error(`Client ${clientId} not found in database`);
                                 continue;
                             }
 
-                            // Capture user status at the time of message receipt (before any services run)
-                            let userAtReceipt: any = null;
-                            const receiptJid = message.key?.remoteJid;
-                            const receiptPhone = receiptJid ? parseInt(receiptJid.split('@')[0]) : null;
-                            if (receiptPhone && !isNaN(receiptPhone)) {
-                                userAtReceipt = await UserData.findOne({ wa_num: receiptPhone }).lean();
-                            }
+                            // Step 4 & 5: Check if user exists
+                            let user = await UserData.findOne({ wa_num: phoneNumber });
 
-                            // Route message based on client type
-                            if (clientData.client_type === 'translate') {
-                                                                    console.log(`Routing to translation service for client ${clientId}`);
-                                await translationService.processTranslationMessage(message, clientId);
+                            if (!user) {
+                                // Step 4: New user - start onboarding
+                                console.log(`New user ${phoneNumber} - starting onboarding`);
+                                await this.handleNewUser(phoneNumber, message.pushName || 'User', clientId, remoteJid);
                             } else {
-                                // Default to chatbot behavior for 'chatbot' type or any other type
-                                console.log(`[DEBUG] Routing to user service for client ${clientId} (type: ${clientData.client_type})`);
-                                await userService.processIncomingMessage(message, clientId);
+                                // Step 5: Existing user - check status
+                                if (user.status === 'ONBOARDING') {
+                                    // Continue onboarding
+                                    await userService.processIncomingMessage(message, clientId);
+                                } else if (user.status === 'ACTIVE') {
+                                    // Step 6: Forward to webhook service
+                                    await this.forwardToWebhook(clientId, message, clientData, user);
+                                } else {
+                                    // Handle other statuses (PENDING_ACTIVATION, EXPIRED, etc.)
+                                    await userService.processIncomingMessage(message, clientId);
+                                }
                             }
 
-                            // Process webhook for this specific message using the already-fetched client data
-                            this.processWebhookAsync(clientId, [message], clientData, userAtReceipt);
                         } catch (error) {
                             console.error('Error processing message:', error);
                         }
                     }
-
-                    // BACKGROUND: Process webhook (non-blocking)
-                    // this.processWebhookAsync(clientId, events['messages.upsert'].messages);
                 }
             }
             
@@ -583,8 +632,7 @@ class ClientService {
             console.log(`Health check completed: ${healthyCount} healthy, ${unhealthyCount} unhealthy clients`);
         }
 
-        // Also check for clients in database that are marked as connected but not in memory
-        await this.syncDisconnectedClients();
+
     }
 
     // Method to sync client status in database with actual connection state
@@ -600,134 +648,83 @@ class ClientService {
         }
     }
 
-    // Method to check for clients marked as connected in DB but not in memory
-    private async syncDisconnectedClients(): Promise<void> {
+
+
+    // Method to manually sync all client statuses (disabled to prevent sync messages)
+    public async syncAllClientStatuses(): Promise<void> {
+        console.log('Client status synchronization disabled.');
+    }
+
+    /**
+     * Handle new user - create user and start onboarding
+     */
+    private async handleNewUser(phoneNumber: number, senderName: string, clientId: string, remoteJid: string): Promise<void> {
         try {
-            // Find clients marked as AUTHENTICATED or INITIALIZING in database
-            const dbClients = await ClientData.find({
-                status: { $in: ['AUTHENTICATED', 'INITIALIZING', 'RECONNECTING'] }
+            // Extract first name from sender name
+            const firstName = senderName ? senderName.split(' ')[0] : '';
+
+            // Create user directly in database with ONBOARDING status
+            const newUser = new UserData({
+                wa_num: phoneNumber,
+                first_name: firstName,
+                status: 'ONBOARDING',
+                current_step: null, // Will be set by onboarding service
+                text_quota: 1000,
+                aud_quota: 100,
+                img_quota: 100,
+                subscription_start: null,
+                subscription_end: null,
+                package_id: null,
+                code: null
             });
 
-            for (const dbClient of dbClients) {
-                const clientId = dbClient._id.toString();
-                const memoryClient = this.clients.get(clientId);
+            await newUser.save();
+            console.log(`+ New user ${phoneNumber} → onboarding`);
 
-                // If client is marked as connected in DB but not in memory, mark as disconnected
-                if (!memoryClient) {
-                    console.log(`Client ${clientId} marked as ${dbClient.status} in DB but not in memory. Setting to DISCONNECTED.`);
-                    await ClientData.findByIdAndUpdate(clientId, { status: 'DISCONNECTED' });
-                }
-            }
+            // Send hardcoded greeting message
+            const greetingMessage = `Hi ${firstName || 'there'}. I am Teeko! Let's get you set up with a few quick questions. It only takes 1 minute!`;
+            await messagingService.sendRawTextMessage(clientId, remoteJid, greetingMessage);
+
+            // Send gender onboarding question immediately
+            await messagingService.sendOptionsMessage('gender', 'onboarding', clientId, remoteJid);
+
+            // Update user's current step to gender
+            await UserData.updateOne(
+                { _id: newUser._id },
+                { current_step: 'gender' }
+            );
+
         } catch (error) {
-            console.error('Failed to sync disconnected clients:', error);
+            console.error(`Error handling new user ${phoneNumber}:`, error);
         }
     }
 
-    // Method to manually sync all client statuses
-    public async syncAllClientStatuses(): Promise<void> {
-        console.log('Manually syncing all client statuses...');
+    /**
+     * Forward message to webhook service based on client type
+     */
+    private async forwardToWebhook(clientId: string, message: any, clientData: any, user: any): Promise<void> {
+        try {
+            const remoteJid = message.key?.remoteJid;
+            const phoneNumber = parseInt(remoteJid.split('@')[0]);
 
-        // Sync connected clients
-        for (const [clientId, client] of this.clients.entries()) {
-            try {
-                if (client && client.user) {
-                    await this.syncClientStatus(clientId, 'AUTHENTICATED');
-                } else {
-                    await this.syncClientStatus(clientId, 'INITIALIZING');
-                }
-            } catch (error) {
-                console.error(`Failed to sync status for client ${clientId}:`, error);
-            }
+            // Step 6: Identify client type and forward to appropriate webhook
+            const clientType = clientData.client_type === 'translate' ? 'translate' : 'chatbot';
+            console.log(`→ ${clientType} webhook for ${phoneNumber}`);
+            await webhookService.sendMessageWebhookUnified(message, clientId, clientType, user);
+        } catch (error) {
+            console.error('Error forwarding to webhook:', error);
         }
-
-        // Sync disconnected clients
-        await this.syncDisconnectedClients();
-
-        console.log('Client status synchronization completed.');
     }
 
     // Method to start periodic health checks
     public startHealthChecks(intervalMinutes: number = 5): void {
-        // Only log once at startup
-        console.log(`Health checks enabled (${intervalMinutes}min intervals)`);
+        console.log(`Health checks enabled (${intervalMinutes}min intervals) - sync messages disabled`);
         setInterval(() => {
             this.performHealthCheck();
         }, intervalMinutes * 60 * 1000);
     }
 
-    // Non-blocking webhook processing using centralized webhook service
-    private async processWebhookAsync(clientId: string, messages: any[], clientData: any, userAtReceipt?: any) {
-        // Process webhook in background without blocking
-        setImmediate(async () => {
-            try {
-                // Starting webhook processing
-                
-                // Use the clientData passed to this function
-                for (const message of messages) {
-                    // Processing message
-                    
-                    if (message.key.fromMe || message.key.remoteJid === 'status@broadcast') {
-                        // Skipping message
-                        continue;
-                    }
 
-                    let user = null;
-
-                    // Respect user status snapshot at message receipt to avoid race with onboarding activation
-                    const isActiveAtReceipt = userAtReceipt && userAtReceipt.status === 'ACTIVE';
-
-                    // For translate clients, get user data
-                    if (clientData.client_type === 'translate') {
-                        const remoteJid = message.key?.remoteJid;
-                        const phoneNumber = remoteJid ? parseInt(remoteJid.split('@')[0]) : null;
-
-                        if (phoneNumber && !isNaN(phoneNumber)) {
-                            // If snapshot says not active, skip immediately
-                            if (!isActiveAtReceipt) {
-                                console.log(`Skipping message for inactive/missing user ${phoneNumber}`);
-                                continue;
-                            }
-                            // Optionally refresh user for payload fields
-                            user = userAtReceipt || await UserData.findOne({ wa_num: phoneNumber }).lean();
-                        }
-                    }
-                    
-                    // For chatbot clients, get user data for first_name and context
-                    if (clientData.client_type === 'chatbot') {
-                        const remoteJid = message.key?.remoteJid;
-                        const phoneNumber = remoteJid ? parseInt(remoteJid.split('@')[0]) : null;
-
-                        if (phoneNumber && !isNaN(phoneNumber)) {
-                            // If snapshot says not active, skip immediately
-                            if (!isActiveAtReceipt) {
-                                console.log(`Skipping message for inactive/missing user ${phoneNumber}`);
-                                continue;
-                            }
-                            // Optionally refresh user for payload fields
-                            user = userAtReceipt || await UserData.findOne({ wa_num: phoneNumber }).lean();
-                        }
-                    }
-
-                    // Use universal webhook service for both client types
-                    // This ensures audio messages and all message types are handled consistently
-                    console.log(`Processing ${clientData.client_type} webhook for message from ${message.key?.remoteJid}`);
-                    
-                    try {
-                        await webhookService.sendMessageWebhookUnified(
-                            message,
-                            clientId,
-                            clientData.client_type,
-                            user
-                        );
-                    } catch (webhookError) {
-                        console.error(`Error sending webhook:`, webhookError);
-                    }
-                }
-            } catch (error) {
-                console.error(`Error processing webhook for client ${clientId}:`, error);
-            }
-        });
-    }
 
     // Method to gracefully shutdown all clients
     public async shutdown(): Promise<void> {

@@ -156,7 +156,7 @@ class TranslationService {
         fallbackExecuted = true;
         console.log(`Webhook response taking too long (>10s) for ${payload.phoneNumber}. Sending fallback message.`);
         if (onFallback) await onFallback();
-      }, 10000);
+      }, 7000);
       
       // Send the webhook request with 30-second timeout
       const response = await axios.post(config.translate_webhook_url, payload, {

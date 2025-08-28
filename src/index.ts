@@ -25,7 +25,7 @@ const startServer = async () => {
   
   socketService.initialize(server);
   
-  // Start health checks for client connections
+  // Start health checks for client connections (sync messages disabled)
   clientService.startHealthChecks(5); // Check every 5 minutes
   
   server.listen(PORT, () => {
