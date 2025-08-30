@@ -306,7 +306,7 @@ class ClientService {
                                 continue;
                             }
 
-                            // Step 3: Validate message type (text, image, audio, or decryption failure)
+                            // Step 3: Validate message type (text, image, audio, or private key error)
                             const messageText = message.message?.conversation ||
                                               message.message?.extendedTextMessage?.text || '';
                             const audioMessage = message.message?.audioMessage;
@@ -317,12 +317,15 @@ class ClientService {
                             const hasAudio = audioMessage && audioMessage.url;
                             const hasImage = imageMessage && imageMessage.url;
 
-                            // Check for decryption failure (message exists but no content)
-                            const hasMessageObject = message.message && Object.keys(message.message).length > 0;
-                            const isDecryptionFailure = hasMessageObject && !hasText && !hasAudio && !hasImage;
+                            // Check for private key error (messageStubType: 2 with "Incorrect private key length" error)
+                            const hasPrivateKeyError = message.messageStubType === 2 && 
+                                                     message.messageStubParameters && 
+                                                     message.messageStubParameters.some(param => 
+                                                         typeof param === 'string' && param.includes('Incorrect private key length')
+                                                     );
 
-                            if (!hasText && !hasAudio && !hasImage && !isDecryptionFailure) {
-                                continue; // Skip messages without any content or decryption failure
+                            if (!hasText && !hasAudio && !hasImage && !hasPrivateKeyError) {
+                                continue; // Skip messages without any content or private key error
                             }
 
                             // Extract phone number and validate
@@ -336,22 +339,22 @@ class ClientService {
                                 continue; // Skip invalid phone numbers silently
                             }
 
-                            // Handle decryption failure case
-                            if (isDecryptionFailure) {
-                                console.log(`Decryption failed for message from ${phoneNumber}`);
+                            // Handle private key error case
+                            if (hasPrivateKeyError) {
+                                console.log(`Private key error detected for message from ${phoneNumber}`);
 
                                 // Check if user exists
                                 let user = await UserData.findOne({ wa_num: phoneNumber });
 
                                 if (!user) {
-                                    // New user with decryption failure - start onboarding
-                                    console.log(`New user ${phoneNumber} with decryption failure - starting onboarding`);
+                                    // New user with private key error - start onboarding
+                                    console.log(`New user ${phoneNumber} with private key error - starting onboarding`);
                                     await this.handleNewUser(phoneNumber, message.pushName || 'User', clientId, remoteJid);
                                 } else {
-                                    // Existing user with decryption failure - skip and ignore
-                                    console.log(`Existing user ${phoneNumber} with decryption failure - ignoring message`);
+                                    // Existing user with private key error - skip and ignore
+                                    console.log(`Existing user ${phoneNumber} with private key error - ignoring message`);
                                 }
-                                continue; // Exit message processing for decryption failures
+                                continue; // Exit message processing for private key errors
                             }
 
                             // Determine message type for logging (normal messages)
