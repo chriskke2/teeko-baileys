@@ -4,6 +4,7 @@
   import activationService from './activation.service';
   import messagingService from './messaging.service';
   import webhookService from './webhook.service';
+  import predefinedService from './predefined.service';
 
   import { UserState } from './activation.service';
   import mongoose from 'mongoose';
@@ -268,9 +269,84 @@
     }
 
     /**
-     * Main message handler that routes incoming messages based on user state
-     * This method now only handles existing users since user creation is handled in client service
-     * @param message The message object from Baileys
+     * Process incoming message for users in onboarding (similar to processIncomingMessage but for onboarding endpoint)
+     * This method is used by the start-onboarding endpoint to handle messages without auto-detecting names from Baileys
+     * @param message The incoming message object
+     * @param clientId The WhatsApp client ID
+     * @param userData User data from request body (wa_num, first_name)
+     */
+    public async processIncomingMessageForOnboarding(
+      message: any,
+      clientId: string,
+      userData: { wa_num: number; first_name: string }
+    ): Promise<void> {
+      try {
+        const remoteJid = message.key?.remoteJid;
+        const messageText = message.message?.conversation || message.message?.extendedTextMessage?.text || '';
+        
+        if (!remoteJid || !messageText) {
+          return;
+        }
+
+        // Extract WhatsApp number from remoteJid
+        const waNumber = parseInt(remoteJid.split('@')[0]);
+        if (isNaN(waNumber)) {
+          console.log(`Invalid WhatsApp number from remoteJid: ${remoteJid}`);
+          return;
+        }
+
+        // Find the user in the database - user should exist since onboarding endpoint handles creation
+        let user = await UserData.findOne({ wa_num: waNumber });
+        if (!user) {
+          console.log(`User ${waNumber} not found in database. This should not happen with onboarding endpoint.`);
+          return;
+        }
+
+
+
+        // Route message based on user state
+        switch (user.status) {
+          case UserState.PENDING_ACTIVATION:
+            await activationService.handleActivationMessage(user, messageText, clientId, remoteJid, user.first_name || 'User');
+            break;
+            
+          case UserState.ONBOARDING:
+            // If user has a current_step, use that directly
+            if (user.current_step) {
+              await onboardingService.processStep(user, messageText, clientId, remoteJid, user.current_step);
+            }
+            // Otherwise fall back to the old determination logic
+            else if (user.gender === 'not_specified' && (!user.segmentation || !user.segmentation.gender)) {
+              await onboardingService.handleGenderSelection(user, messageText, clientId, remoteJid);
+            } else {
+              // Handle next onboarding step or default response
+              await onboardingService.handleNextOnboardingStep(user, messageText, clientId, remoteJid);
+            }
+            break;
+            
+          case UserState.ACTIVE:
+            // Handle messages from active users
+            await this.handleActiveUserMessage(user, message, clientId, remoteJid, user.first_name || 'User');
+            break;
+            
+          case UserState.EXPIRED:
+            // Handle expired user messages
+            await activationService.handleExpiredUser(user, messageText, clientId, remoteJid);
+            break;
+            
+          default:
+            console.log(`Unhandled user state: ${user.status}`);
+            break;
+        }
+      } catch (error) {
+        console.error('Error processing incoming message for onboarding:', error);
+      }
+    }
+
+    /**
+     * Process incoming message from WhatsApp
+     * This method processes messages without extracting names from Baileys
+     * @param message The incoming message object
      * @param clientId The WhatsApp client ID
      */
     public async processIncomingMessage(message: any, clientId: string): Promise<void> {
@@ -297,9 +373,6 @@
         // Extract message text
         let messageText = messagingService.extractMessageText(message);
 
-        // Extract sender name
-        const senderName = message.pushName || 'User';
-
         // Find the user in the database - user should exist since client service handles creation
         let user = await UserData.findOne({ wa_num: waNumber });
         if (!user) {
@@ -307,19 +380,10 @@
           return;
         }
 
-        // Update first_name if not set or different from sender name
-        const firstName = senderName ? senderName.split(' ')[0] : '';
-        if (!user.first_name || (firstName && user.first_name !== firstName)) {
-          await UserData.updateOne(
-            { _id: user._id },
-            { first_name: firstName }
-          );
-        }
-
         // Route message based on user state
         switch (user.status) {
           case UserState.PENDING_ACTIVATION:
-            await activationService.handleActivationMessage(user, messageText, clientId, remoteJid, senderName);
+            await activationService.handleActivationMessage(user, messageText, clientId, remoteJid, user.first_name || 'User');
             break;
             
           case UserState.ONBOARDING:
@@ -330,7 +394,7 @@
             // Otherwise fall back to the old determination logic
             else if (user.gender === 'not_specified' && (!user.segmentation || !user.segmentation.gender)) {
               await onboardingService.handleGenderSelection(user, messageText, clientId, remoteJid);
-          } else {
+            } else {
               // Handle next onboarding step or default response
               await onboardingService.handleNextOnboardingStep(user, messageText, clientId, remoteJid);
             }
@@ -338,7 +402,7 @@
             
           case UserState.ACTIVE:
             // Handle messages from active users
-            await this.handleActiveUserMessage(user, message, clientId, remoteJid, senderName);
+            await this.handleActiveUserMessage(user, message, clientId, remoteJid, user.first_name || 'User');
             break;
             
           case UserState.EXPIRED:
@@ -392,6 +456,150 @@
     // Legacy method for backward compatibility
     public async sendGenderSelectionMessage(clientId: string, recipient: string): Promise<boolean> {
       return onboardingService.sendOptionsMessage('gender', 'onboarding', clientId, recipient);
+    }
+
+    /**
+     * Start onboarding process for a new user
+     * @param userData Object containing user_name and wa_num
+     * @returns Object with success status and user data or error
+     */
+    public async startOnboarding(userData: { 
+      user_name: string; 
+      wa_num: number; 
+    }): Promise<{ 
+      success: boolean; 
+      user?: any; 
+      error?: string 
+    }> {
+      try {
+        // Check if user with this wa_num already exists
+        const existingUser = await UserData.findOne({ wa_num: userData.wa_num });
+        if (existingUser) {
+          return {
+            success: false,
+            error: 'User with this WhatsApp number has already registered.'
+          };
+        }
+
+        // Find the chatbot client automatically
+        const chatbotClient = await this.findChatbotClient();
+        if (!chatbotClient) {
+          return {
+            success: false,
+            error: 'No chatbot client found. Please ensure a chatbot client is connected.'
+          };
+        }
+
+        // Check if the client is connected
+        const isClientConnected = await this.isClientConnected(chatbotClient._id.toString());
+        if (!isClientConnected) {
+          return {
+            success: false,
+            error: 'WhatsApp client is not connected. Please connect the client first.'
+          };
+        }
+
+        // Format recipient JID for WhatsApp
+        const recipient = `${userData.wa_num}@s.whatsapp.net`;
+        
+        // Send greeting message first
+        const greetingMessage = `Hi ${userData.user_name}. I am Teeko! Let's get you set up with a few quick questions. It only takes 1 minute!`;
+        const greetingSent = await messagingService.sendRawTextMessage(
+          chatbotClient._id.toString(),
+          recipient,
+          greetingMessage
+        );
+
+        if (!greetingSent) {
+          return {
+            success: false,
+            error: 'Failed to send greeting message. Phone number may not be detected on WhatsApp.'
+          };
+        }
+
+        // Get the first onboarding step
+        const allSteps = await predefinedService.getAllByType('onboarding');
+        if (!allSteps || allSteps.length === 0) {
+          return {
+            success: false,
+            error: 'No onboarding steps found in the system.'
+          };
+        }
+        
+        // Sort by sequence and get the first step
+        const sortedSteps = allSteps.sort((a: any, b: any) => {
+          const seqA = typeof a.sequence === 'number' ? a.sequence : 999;
+          const seqB = typeof b.sequence === 'number' ? b.sequence : 999;
+          return seqA - seqB;
+        });
+        
+        const firstStep = sortedSteps[0];
+        if (!firstStep) {
+          return {
+            success: false,
+            error: 'Failed to determine first onboarding step.'
+          };
+        }
+
+        // Send the first onboarding question
+        const messageSent = await onboardingService.sendOnboardingQuestion(
+          firstStep.field, 
+          chatbotClient._id.toString(), 
+          recipient
+        );
+
+        if (!messageSent) {
+          return {
+            success: false,
+            error: 'Failed to send first onboarding question.'
+          };
+        }
+
+        // Create new user in database
+        const newUser = new UserData({
+          wa_num: userData.wa_num,
+          first_name: userData.user_name,
+          status: 'ONBOARDING',
+          current_step: firstStep.field,
+          created_via_endpoint: true // Flag to prevent Baileys overwrite
+        });
+
+        const savedUser = await newUser.save();
+
+        return {
+          success: true,
+          user: savedUser
+        };
+
+      } catch (error) {
+        console.error('Error starting onboarding:', error);
+        return {
+          success: false,
+          error: 'Failed to start onboarding process.'
+        };
+      }
+    }
+
+    /**
+     * Find the first available chatbot client
+     * @returns Client data or null if not found
+     */
+    private async findChatbotClient(): Promise<any> {
+      try {
+        // Import ClientData here to avoid circular dependency
+        const ClientData = require('../models/client.model').default;
+        
+        // Find the first client with type 'chatbot' and status 'AUTHENTICATED'
+        const chatbotClient = await ClientData.findOne({ 
+          client_type: 'chatbot',
+          status: 'AUTHENTICATED'
+        }).lean();
+        
+        return chatbotClient;
+      } catch (error) {
+        console.error('Error finding chatbot client:', error);
+        return null;
+      }
     }
   }
 

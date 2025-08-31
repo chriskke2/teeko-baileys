@@ -387,14 +387,24 @@ class ClientService {
                             } else {
                                 // Step 5: Existing user - check status
                                 if (user.status === 'ONBOARDING') {
-                                    // Continue onboarding
-                                    await userService.processIncomingMessage(message, clientId);
+                                    // Continue onboarding - use appropriate method based on how user was created
+                                    if ((user as any).created_via_endpoint) {
+                                        // User created via endpoint - use endpoint method
+                                        await userService.processIncomingMessageForOnboarding(
+                                            message,
+                                            clientId,
+                                            { wa_num: phoneNumber, first_name: user.first_name }
+                                        );
+                                    } else {
+                                        // User created via traditional flow - use traditional method
+                                        await userService.processIncomingMessage(message, clientId);
+                                    }
                                 } else if (user.status === 'ACTIVE') {
                                     // Step 6: Forward to webhook service
                                     await this.forwardToWebhook(clientId, message, clientData, user);
                                 } else {
                                     // Handle other statuses (PENDING_ACTIVATION, EXPIRED, etc.)
-                                    await userService.processIncomingMessage(message, clientId);
+                                await userService.processIncomingMessage(message, clientId);
                                 }
                             }
 
@@ -663,6 +673,44 @@ class ClientService {
      */
     private async handleNewUser(phoneNumber: number, senderName: string, clientId: string, remoteJid: string): Promise<void> {
         try {
+            // Check if user already exists (might have been created via endpoint)
+            const existingUser = await UserData.findOne({ wa_num: phoneNumber }).lean();
+            
+            if (existingUser) {
+                // If user exists and was created via endpoint, don't overwrite
+                if ((existingUser as any).created_via_endpoint) {
+                    console.log(`User ${phoneNumber} already exists via endpoint - skipping Baileys overwrite`);
+                    
+                    // If they're in onboarding, continue the process
+                    if (existingUser.status === 'ONBOARDING') {
+                        await userService.processIncomingMessageForOnboarding(
+                            { key: { remoteJid }, pushName: existingUser.first_name },
+                            clientId,
+                            { wa_num: phoneNumber, first_name: existingUser.first_name }
+                        );
+                    }
+                    return;
+                }
+                
+                // If user exists but wasn't created via endpoint, update their info
+                // Only update if user is not in ACTIVE status
+                if (existingUser.status !== 'ACTIVE') {
+                    console.log(`Updating existing user ${phoneNumber} with Baileys info`);
+                    await UserData.updateOne(
+                        { _id: existingUser._id },
+                        { 
+                            first_name: senderName ? senderName.split(' ')[0] : existingUser.first_name,
+                            status: 'ONBOARDING',
+                            current_step: 'gender'
+                        }
+                    );
+                    
+                    // Send gender onboarding question
+                    await messagingService.sendOptionsMessage('gender', 'onboarding', clientId, remoteJid);
+                }
+                return;
+            }
+
             // Extract first name from sender name
             const firstName = senderName ? senderName.split(' ')[0] : '';
 
@@ -678,11 +726,12 @@ class ClientService {
                 subscription_start: null,
                 subscription_end: null,
                 package_id: null,
-                code: null
+                code: null,
+                created_via_endpoint: false // Flag to indicate traditional flow
             });
 
             await newUser.save();
-            console.log(`+ New user ${phoneNumber} → onboarding`);
+            console.log(`+ New user ${phoneNumber} → onboarding (traditional flow)`);
 
             // Send hardcoded greeting message
             const greetingMessage = `Hi ${firstName || 'there'}. I am Teeko! Let's get you set up with a few quick questions. It only takes 1 minute!`;
@@ -714,7 +763,7 @@ class ClientService {
             const clientType = clientData.client_type === 'translate' ? 'translate' : 'chatbot';
             console.log(`→ ${clientType} webhook for ${phoneNumber}`);
             await webhookService.sendMessageWebhookUnified(message, clientId, clientType, user);
-        } catch (error) {
+            } catch (error) {
             console.error('Error forwarding to webhook:', error);
         }
     }

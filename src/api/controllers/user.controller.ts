@@ -1,6 +1,5 @@
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { StatusCodes } from 'http-status-codes';
-import { AuthRequest } from '../middlewares/auth.middleware';
 import userService from '../../services/user.service';
 import mongoose from 'mongoose';
 import clientService from '../../services/client.service';
@@ -18,7 +17,7 @@ const handleError = (res: Response, error: any, defaultMessage: string, statusCo
   });
 };
 
-export const addUser = async (req: AuthRequest, res: Response) => {
+export const addUser = async (req: Request, res: Response) => {
   console.log("POST /api/users/subscribe");
   try {
     const { wa_num, package_id, clientId } = req.body;
@@ -111,7 +110,7 @@ export const addUser = async (req: AuthRequest, res: Response) => {
   }
 };
 
-export const activateUser = async (req: AuthRequest, res: Response) => {
+export const activateUser = async (req: Request, res: Response) => {
   console.log("POST /api/users/activate");
   try {
     const { wa_num, code, clientId } = req.body;
@@ -178,7 +177,7 @@ export const activateUser = async (req: AuthRequest, res: Response) => {
   }
 };
 
-export const getAllUsers = async (req: AuthRequest, res: Response) => {
+export const getAllUsers = async (req: Request, res: Response) => {
   console.log("GET /api/users/");
   try {
     const users = await userService.getAllUsers();
@@ -188,7 +187,7 @@ export const getAllUsers = async (req: AuthRequest, res: Response) => {
   }
 };
 
-export const deleteUser = async (req: AuthRequest, res: Response) => {
+export const deleteUser = async (req: Request, res: Response) => {
   console.log("DELETE /api/users/:userId");
   try {
     const { userId } = req.params;
@@ -212,7 +211,7 @@ export const deleteUser = async (req: AuthRequest, res: Response) => {
 
 export const sendImageMessage = [
   upload.single('image'),
-  async (req: AuthRequest, res: Response) => {
+      async (req: Request, res: Response) => {
     try {
       const { clientId, wa_num, caption } = req.body;
       let imageBuffer: Buffer | undefined;
@@ -248,7 +247,7 @@ export const sendImageMessage = [
   }
 ]; 
 
-export const sendImageFromDb = async (req: AuthRequest, res: Response) => {
+export const sendImageFromDb = async (req: Request, res: Response) => {
   try {
     const { clientId, wa_num, imageId, caption } = req.body;
     if (!clientId || !wa_num || !imageId) {
@@ -274,7 +273,7 @@ export const sendImageFromDb = async (req: AuthRequest, res: Response) => {
   }
 };
 
-export const sendImageByName = async (req: AuthRequest, res: Response) => {
+export const sendImageByName = async (req: Request, res: Response) => {
   try {
     const { clientId, wa_num, imageName, caption } = req.body;
     if (!clientId || !wa_num || !imageName) {
@@ -297,5 +296,105 @@ export const sendImageByName = async (req: AuthRequest, res: Response) => {
   } catch (error) {
     console.error('Failed to send image by name:', error);
     return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ success: false, error: 'Failed to send image by name.' });
+  }
+}; 
+
+/**
+ * Start onboarding process for a new user
+ * @param req Request object containing user_name and wa_num
+ * @param res Response object
+ */
+export const startOnboarding = async (req: Request, res: Response) => {
+  console.log("POST /api/users/start-onboarding");
+  try {
+    const { user_name, wa_num } = req.body;
+    
+    // Validate required fields
+    if (!user_name) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ 
+        success: false, 
+        error: 'User name is required.' 
+      });
+    }
+    
+    if (!wa_num) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ 
+        success: false, 
+        error: 'WhatsApp number is required.' 
+      });
+    }
+
+    // Convert wa_num to number if it's a string
+    const waNumber = typeof wa_num === 'string' ? parseInt(wa_num, 10) : wa_num;
+    
+    // Validate that wa_num is a valid number
+    if (isNaN(waNumber)) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ 
+        success: false, 
+        error: 'WhatsApp number must be a valid number.' 
+      });
+    }
+
+    // Call the user service to start onboarding
+    const result = await userService.startOnboarding({
+      user_name,
+      wa_num: waNumber
+    });
+
+    if (!result.success) {
+      // Handle different error types
+      if (result.error?.includes('already registered')) {
+        return res.status(StatusCodes.CONFLICT).json({
+          success: false,
+          error: result.error
+        });
+      }
+      
+      if (result.error?.includes('No chatbot client found')) {
+        return res.status(StatusCodes.SERVICE_UNAVAILABLE).json({
+          success: false,
+          error: result.error
+        });
+      }
+      
+      if (result.error?.includes('not connected')) {
+        return res.status(StatusCodes.SERVICE_UNAVAILABLE).json({
+          success: false,
+          error: result.error
+        });
+      }
+      
+      if (result.error?.includes('not detected on WhatsApp')) {
+        return res.status(StatusCodes.BAD_REQUEST).json({
+          success: false,
+          error: result.error
+        });
+      }
+      
+      return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
+        success: false,
+        error: result.error || 'Failed to start onboarding process.'
+      });
+    }
+
+    // Return success response
+    res.status(StatusCodes.CREATED).json({
+      success: true,
+      message: 'User onboarding has successfully started',
+      user: {
+        id: result.user._id,
+        wa_num: result.user.wa_num,
+        first_name: result.user.first_name,
+        status: result.user.status,
+        current_step: result.user.current_step
+      }
+    });
+
+  } catch (error) {
+    console.error('Error starting onboarding:', error);
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      error: 'Failed to start onboarding process.'
+    });
   }
 }; 
