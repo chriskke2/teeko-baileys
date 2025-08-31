@@ -57,7 +57,26 @@ export const addUser = async (req: Request, res: Response) => {
     
     // Validate that wa_num is a valid number
     if (isNaN(waNumber)) {
-      return res.status(StatusCodes.BAD_REQUEST).json({ success: false, error: 'WhatsApp number must be a valid number.' });
+      return res.status(StatusCodes.BAD_REQUEST).json({ 
+        success: false, 
+        error: 'Phone number must be a valid number containing only digits.' 
+      });
+    }
+
+    // Additional validation: check if the original input contains only digits
+    if (typeof wa_num === 'string' && !/^\d+$/.test(wa_num)) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ 
+        success: false, 
+        error: 'Phone number must contain only digits (0-9).' 
+      });
+    }
+
+    // Validate phone number length (typical phone numbers are 7-15 digits)
+    if (waNumber < 1000000 || waNumber > 999999999999999) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ 
+        success: false, 
+        error: 'Phone number must be between 7 and 15 digits long.' 
+      });
     }
 
     try {
